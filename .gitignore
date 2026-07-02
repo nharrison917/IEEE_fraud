@@ -1,0 +1,22 @@
+# Data files -- large, not tracked; download via Kaggle API
+data/
+
+# Generated model binaries -- regenerate by running pipeline scripts
+models/*.pkl
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Conda / virtual environments
+.env
+.venv/
+
+# IDE
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
