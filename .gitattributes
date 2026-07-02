@@ -1,3 +1,4 @@
 # Prevent GitHub from misreporting repo language due to generated HTML outputs
 phase1_baseline/*.html linguist-generated=true
 phase2_cost_analysis/*.html linguist-generated=true
+phase2_feature_engineering/*.html linguist-generated=true
