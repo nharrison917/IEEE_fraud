@@ -283,6 +283,58 @@ this table's numbers exactly (val ROC-AUC 0.9125, PR-AUC 0.5464, best round 89).
 
 ---
 
+## Phase 2 Tier 1 — Within-Row Feature Engineering (Results)
+
+`phase2_feature_engineering/feature_engineering.py` + `pipeline.py`. Adds the
+9 within-row features from the Feature Engineering section above
+(`hour_of_day`, `day_of_week`, `local_hour`, `log1p_TransactionAmt`,
+`is_round_amount`, `P_email_matches_R_email`, `P_email_is_free`,
+`browser_name`, `os_name`) to each fold before the unchanged Phase 1
+`Preprocessor` runs. No fitting involved in any of these — each is a
+deterministic per-row function, so they're computed independently on
+train/val/test with no leakage risk.
+
+**Assumption confirmed with user:** raw `id_30`/`id_31` are kept alongside the
+parsed `os_name`/`browser_name` family columns rather than replaced, so
+version-specific signal (e.g. an outdated browser correlating with fraud)
+isn't discarded. Free-email prefix list and browser/OS family buckets were
+built from the actual unique values in the training data, not guessed.
+
+### Results (validation set, vs corrected Phase 1 baseline)
+
+| Model | Metric | Phase 1 | Phase 2 Tier 1 | Delta |
+|---|---|---|---|---|
+| LightGBM | ROC-AUC | 0.9125 | 0.9083 | -0.0042 |
+| LightGBM | PR-AUC | 0.5464 | 0.5579 | **+0.0115** |
+| XGBoost | ROC-AUC | 0.9170 | 0.9161 | -0.0009 |
+| XGBoost | PR-AUC | 0.5714 | 0.5823 | **+0.0109** |
+
+PR-AUC (primary metric) improved modestly for both models; ROC-AUC is flat to
+slightly down, within run-to-run noise range for a single seed.
+
+**Train-val gap widened for LightGBM:** train PR-AUC rose from 0.864 to 0.911
+while val PR-AUC only rose by 0.012 (gap: 0.237 → 0.353). LightGBM also trained
+longer before early stopping (89 → 122 rounds) — plausible explanation is that
+`feature_fraction=0.8` samples a different random column subset each round now
+that there are more columns (508 → 523), changing training dynamics even under
+the same seed. XGBoost's gap moved much less (0.256 → 0.271, 648 → 753 rounds).
+Worth watching if Tier 2 adds more features — LightGBM may need retuning
+(`num_leaves`, `min_child_samples`) rather than assuming more features are free.
+
+**Feature importance:** none of the 9 new features reached LightGBM's top 15 —
+its PR-AUC gain isn't attributable to any single dominant new feature.
+`P_email_matches_R_email` reached XGBoost's top 12, the one new feature with a
+clearly visible individual contribution.
+
+**Interpretation:** Tier 1 features are a net positive on the metric that
+matters (PR-AUC) but a modest one, not a step change. This is consistent with
+the EDA finding that the anonymized V columns already carry most of the
+predictive signal — within-row engineered features add at the margins.
+Card-level velocity aggregates (Tier 2) are the more likely source of a larger
+gain, if the C columns turn out not to already cover it.
+
+---
+
 ## Phase 2 — Cost-Sensitive Decision Framework
 
 Same structure as prior project (`credit_card_fraud/phase2_cost_analysis/`).
@@ -322,13 +374,17 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (end of session 4):**
+**Current state (end of session 5):**
 - main: Phase 1 complete and merged (PR #1)
-- `phase1_baseline/pipeline.py`, `CLAUDE.md`, feature importance HTMLs, and JSON
-  metrics all on main
-- No active feature branch — clean slate for Phase 2
-- **Next action:** create `feature/phase2-feature-engineering` branch, implement
-  Tier 1 within-row features, re-run pipeline, compare against Phase 1 baseline
+- Branch `feature/phase2-feature-engineering`: Tier 1 within-row features
+  implemented and evaluated (`phase2_feature_engineering/`); results above.
+  Also fixed the stale `models/lgb_metrics.json` artifact (see note above)
+  by re-running Phase 1 with unchanged code.
+- Not yet committed or pushed — pending user confirmation.
+- **Next action:** confirm commit split (Phase 1 metrics fix vs Tier 1 feature
+  work), commit, push, open PR. After merge: decide whether to pursue Tier 2
+  card-level aggregates or move to the Phase 2 Cost-Sensitive Decision
+  Framework section below.
 
 ---
 
@@ -340,10 +396,11 @@ When starting a new session:
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status` and `git log --oneline` to see current state
-6. **Next action:** Create `feature/phase2-feature-engineering` branch and implement
-   Tier 1 within-row features (see Phase 2 section below for full list)
+6. **Next action:** confirm commit split and open the Phase 2 Tier 1 PR (see
+   "Current state" above). After merge, decide Tier 2 vs Cost-Sensitive
+   Decision Framework as the next phase.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
-   `local_hour` is valid. Implement in Phase 2 Tier 1.
+   `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 
 ---
 
@@ -362,3 +419,5 @@ When starting a new session:
 | addr2 treatment | Binary `is_us` | Preserves non-US signal; near-zero variance otherwise |
 | TransactionDT timezone | Single reference point confirmed | id_14-adjusted local_hour is valid for Phase 2 |
 | High-card string encoding | LightGBM native categorical | Avoids target-encoding leakage; OHE threshold = 10 unique values |
+| Tier 1 browser/OS columns | Keep raw id_30/id_31 alongside parsed browser_name/os_name | Confirmed with user: avoids discarding version-specific signal; trees tolerate redundant features |
+| Tier 1 outputs | Written to phase2_feature_engineering/ + models/*_phase2_* | Avoids overwriting Phase 1 baseline artifacts, keeps before/after comparable |
