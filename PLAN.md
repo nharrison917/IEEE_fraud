@@ -142,9 +142,12 @@ Add before any imputation so the flag reflects true absence, not imputed values.
 | id_ categorical | Fill with "missing" | Third distinct state |
 | D columns | Add `D{n}_was_missing` binary, then fill -999 | Absence = "no prior event" signal |
 | M columns | Fill with "missing" (add as category) | T/F/missing are three states |
-| card numeric | Median (train) | Random, minimal |
-| card categorical | Mode (train) | Random, minimal |
-| addr, dist | Fill with -999 | Structural |
+| card1 | Median fill for missing; treat as numeric | 11,735 unique values — masked identifier; tree threshold splits are appropriate |
+| card2, card3, card5 | Median fill for missing; mark as categorical in LightGBM | 100–499 unique values — numeric codes, not ordinal; LightGBM can group non-contiguous codes |
+| card4, card6 | Mode fill for missing; already string categorical | Confirmed categorical (visa/debit etc.) |
+| addr1 | -999 fill for missing; mark as categorical in LightGBM | 308 unique integer values — billing region/ZIP code, not ordinal |
+| addr2 | Convert to binary `is_us` (value == 87 → 1) | 99% of rows = 87 (US country code); binary preserves the 1% non-US signal |
+| dist1, dist2 | -999 fill for missing; keep numeric | Genuinely continuous distance values (0–10,000+) |
 
 ### 3. Categorical encoding
 
@@ -158,6 +161,11 @@ Add before any imputation so the flag reflects true absence, not imputed values.
 | P_emaildomain, R_emaildomain | 59–60 | Target encoding (fit on train only) |
 | id_30 (OS), id_31 (browser) | 75, 130 | Target encoding or group to OS family |
 | DeviceInfo | 1,786 | Target encoding |
+| id_14 | 25 | Categorical (timezone offsets in minutes: -660 to 720) |
+| id_32 | 4 | Categorical (screen color depth: 24-bit, 32-bit etc.) |
+| id_13, id_17, id_18, id_19, id_20, id_21, id_22, id_24, id_25, id_26 | 10–492 | Categorical codes — mark as categorical in LightGBM |
+| id_01–id_11 (excl. id_02, id_14) | n/a | Numeric confirmed (risk scores / delta fields) |
+| id_02 | 81,902 | Numeric (high-cardinality device/session identifier) |
 
 **Target encoding leakage note:** Encoding each training row using the mean
 of *all* training rows for that category is circular. Use leave-one-out or
@@ -180,8 +188,13 @@ clean before/after story for the write-up and portfolio.
 ### Phase 2 enhancement (after baseline results):
 
 **Tier 1 — within-row features (safe, no leakage risk):**
-- `hour_of_day`: `(TransactionDT % 86400) // 3600` — relative, not absolute
+- `hour_of_day`: `(TransactionDT % 86400) // 3600` — relative only (see timezone note below)
 - `day_of_week`: `(TransactionDT // 86400) % 7` — relative
+- `local_hour` (where id_14 is present): `((TransactionDT + id_14*60) % 86400) // 3600`
+  — **if TransactionDT is UTC**, applying the id_14 offset gives true local hour,
+  which is far more meaningful for fraud timing patterns (fraud follows local behavior,
+  not UTC). Confirm assumption before using. Only available for ~24% of rows (identity
+  transactions); fall back to relative hour elsewhere.
 - `log1p_TransactionAmt`: right-skewed amounts
 - `is_round_amount`: `TransactionAmt % 1 == 0`
 - `P_email_matches_R_email`: purchaser and recipient on same domain
@@ -222,7 +235,7 @@ methodology rather than included with a separate preprocessing path.
 - **F1 at optimal threshold**: For operational interpretation in Phase 2.
 
 ### Pipeline file
-`phase1_baseline/pipeline.py` — to be written next session.
+`phase1_baseline/pipeline.py` — complete.
 
 Steps:
 1. `load_data()` + `make_split()` from utils.py
@@ -231,6 +244,34 @@ Steps:
 4. XGBoost train + val evaluation
 5. Feature importance plots
 6. Save best model to `models/`
+
+### Phase 1 results (validation set, no feature engineering)
+
+| Model | Val ROC-AUC | Val PR-AUC | Train PR-AUC | Best round |
+|---|---|---|---|---|
+| LightGBM (127 leaves) | 0.9125 | 0.5464 | 0.864 | 89 |
+| XGBoost | 0.9170 | 0.5714 | 0.827 | 648 |
+
+**XGBoost wins Phase 1** on both metrics despite receiving ordinal integer codes for
+categorical columns where LightGBM got native categorical handling. Likely explanation:
+the V columns (continuous Vesta outputs) carry most Phase 1 signal and suit XGBoost's
+numeric treatment; LightGBM's categorical advantage on card2/addr1 was real but not
+enough to overcome the parameter configuration.
+
+**LightGBM early stopping** at 89 rounds is a genuine ceiling, not a parameter
+artifact: reducing `num_leaves` to 63 caused earlier stopping (76 rounds) and worse
+val PR-AUC (0.531). 127 leaves are needed to partition card2's 400+ unique codes.
+
+**Key feature importance findings:**
+- LightGBM: card2 (#1 by large margin), addr1 (#3) — native categoricals dominating
+- XGBoost: V258, V70, V294 dominate — continuous Vesta features
+- M4__missing in both top-30 lists — validates 3-state M column treatment
+- D2_was_missing in XGBoost top-30 — validates D missingness indicator strategy
+- is_us in XGBoost top-12 — addr2 binary conversion carried signal
+- id_01-id_11 Vesta risk scores absent from both top-30 — signal likely absorbed by V columns
+
+**Train-val gap** is significant (especially PR-AUC). Expected for no-tuning baseline
+with high-cardinality categoricals. Feature engineering (Phase 2) should close it.
 
 ---
 
@@ -273,8 +314,12 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state:** Initial commit pushed to main (f9ddb65).
-Next work should be on a feature branch, e.g. `feature/preprocessing-pipeline`.
+**Current state (end of session 4):**
+- main: 2 commits (f9ddb65 initial, 90850d4 plan)
+- Active branch: `feature/preprocessing-pipeline` (not yet pushed to remote)
+- `phase1_baseline/pipeline.py` complete and run — Phase 1 results recorded above
+- `CLAUDE.md` created with project-level instructions
+- **Next action:** commit Phase 1 work, open PR, begin Phase 2 feature engineering
 
 ---
 
@@ -286,7 +331,10 @@ When starting a new session:
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status` and `git log --oneline` to see current state
-6. **Next action:** Write `phase1_baseline/pipeline.py` on a feature branch
+6. **Next action:** Commit Phase 1 work, open PR, begin Phase 2 feature engineering
+7. TransactionDT timezone: competition description says "timedelta from a given
+   reference datetime" — singular reference point, so id_14-adjusted `local_hour`
+   is valid for Phase 2 feature engineering.  Confirmed resolved.
 
 ---
 
@@ -302,3 +350,6 @@ When starting a new session:
 | LR excluded | Yes | Feature structure works against it; document rather than include |
 | Primary metric | PR-AUC | More informative than ROC-AUC for imbalanced classes |
 | Phase 2 cost function | Deferred | Carry prior structure; confirm values at Phase 2 start |
+| addr2 treatment | Binary `is_us` | Preserves non-US signal; near-zero variance otherwise |
+| TransactionDT timezone | Single reference point confirmed | id_14-adjusted local_hour is valid for Phase 2 |
+| High-card string encoding | LightGBM native categorical | Avoids target-encoding leakage; OHE threshold = 10 unique values |

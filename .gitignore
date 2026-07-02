@@ -3,6 +3,7 @@ data/
 
 # Generated model binaries -- regenerate by running pipeline scripts
 models/*.pkl
+models/*.txt
 
 # Python cache
 __pycache__/
