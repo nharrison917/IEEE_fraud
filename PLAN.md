@@ -315,11 +315,12 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - Commit by concern, not by session
 
 **Current state (end of session 4):**
-- main: 2 commits (f9ddb65 initial, 90850d4 plan)
-- Active branch: `feature/preprocessing-pipeline` (not yet pushed to remote)
-- `phase1_baseline/pipeline.py` complete and run — Phase 1 results recorded above
-- `CLAUDE.md` created with project-level instructions
-- **Next action:** commit Phase 1 work, open PR, begin Phase 2 feature engineering
+- main: Phase 1 complete and merged (PR #1)
+- `phase1_baseline/pipeline.py`, `CLAUDE.md`, feature importance HTMLs, and JSON
+  metrics all on main
+- No active feature branch — clean slate for Phase 2
+- **Next action:** create `feature/phase2-feature-engineering` branch, implement
+  Tier 1 within-row features, re-run pipeline, compare against Phase 1 baseline
 
 ---
 
@@ -331,10 +332,10 @@ When starting a new session:
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status` and `git log --oneline` to see current state
-6. **Next action:** Commit Phase 1 work, open PR, begin Phase 2 feature engineering
-7. TransactionDT timezone: competition description says "timedelta from a given
-   reference datetime" — singular reference point, so id_14-adjusted `local_hour`
-   is valid for Phase 2 feature engineering.  Confirmed resolved.
+6. **Next action:** Create `feature/phase2-feature-engineering` branch and implement
+   Tier 1 within-row features (see Phase 2 section below for full list)
+7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
+   `local_hour` is valid. Implement in Phase 2 Tier 1.
 
 ---
 
