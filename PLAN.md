@@ -273,6 +273,14 @@ val PR-AUC (0.531). 127 leaves are needed to partition card2's 400+ unique codes
 **Train-val gap** is significant (especially PR-AUC). Expected for no-tuning baseline
 with high-cardinality categoricals. Feature engineering (Phase 2) should close it.
 
+**Note (session 5):** `models/lgb_metrics.json` had drifted out of sync with this
+table — it held results from the earlier `num_leaves=63` experiment referenced
+above (val PR-AUC 0.531) rather than the final `num_leaves=127` config already in
+`pipeline.py`. Confirmed via `git diff` that `pipeline.py`/`utils.py` were
+unchanged since commit `7938f8a`, so this was a stale artifact, not a code
+regression. Fixed by re-running `phase1_baseline/pipeline.py`, which reproduced
+this table's numbers exactly (val ROC-AUC 0.9125, PR-AUC 0.5464, best round 89).
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
