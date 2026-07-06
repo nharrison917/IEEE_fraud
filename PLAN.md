@@ -202,12 +202,52 @@ clean before/after story for the write-up and portfolio.
 - Parsed `browser_name` from id_31 (drop version strings)
 - Parsed `os_name` from id_30
 
-**Tier 2 — card-level aggregates (leakage risk, defer or skip):**
-Velocity features (count per card per time window, amount std per card, etc.)
-require expanding-window computation to avoid future leakage. The C columns
-(Vesta's pre-computed counting features) already cover most of this correctly.
-Use C columns instead of re-engineering unless baseline feature importance
-shows they're insufficient.
+**Tier 2 — card-level aggregates (planning, session 5):**
+
+Not yet implemented. Everything shipped so far (Tier 1) is within-row only;
+Tier 2 is the first pass at relational/behavioral features — the actual
+reason this dataset was chosen over the PCA-anonymized prior project.
+
+*Candidate grouping keys (proxy "entities" to aggregate by, since there's no
+true customer ID):*
+- `card1` alone — most granular, simplest starting point (11,735 uniques)
+- `card1 + card2 + card3 + card5 + addr1` — tighter "account-like" proxy
+- `DeviceInfo` / `id_31` — device-based identity, orthogonal to card-based
+- Reconstructed UID via `D1` (`TransactionDT_days - D1` ≈ constant per
+  account) — a documented technique from public IEEE-CIS Kaggle solutions,
+  not an original derivation. Validate that it actually clusters into
+  stable groups before trusting it.
+
+*Candidate feature types per entity (all causal/expanding-window):*
+- Velocity: count of prior transactions for the entity; count in last 1h/24h/7d
+- Recency: time since entity's previous transaction
+- Behavioral baseline: expanding mean/std of `TransactionAmt`; z-score of
+  current amount against it
+- Diversity: count of distinct `addr1`/`P_emaildomain`/`DeviceInfo` seen for
+  the entity so far
+
+*Triage before building all of this:* `C1`, `C13`, `C14` already rank in
+both models' top-15 importance (Vesta's own counting features carry real
+signal). Build one or two candidates first (e.g. card1's 24h transaction
+count, amount z-score) and correlate them against the existing C/D columns
+before investing further — high correlation means redundant, not novel.
+
+*Leakage discipline — different from everything built so far:* Tier 1 and
+the Preprocessor both follow "fit on train, apply to val/test." Tier 2
+aggregates follow a different rule: each row's feature must only use
+transactions strictly earlier in time for that entity, computed via
+expanding/rolling operations on the full timeline sorted by entity+time,
+*before* the train/val/test split — not after. This is legitimate (a
+deployed model has access to a card's full prior history, including what
+falls inside the "train window" here), but a naive `groupby().transform()`
+silently includes future rows. This is the highest leakage-risk part of
+Tier 2 and needs explicit test coverage, not just careful reading.
+
+*Methodology carryover:* use ablation mode (`feature_fraction=1.0`,
+`colsample_bytree=1.0` via `ablation_check.py`) to evaluate Tier 2 features
+individually or in small groups, given how many columns Tier 2 will add at
+once — the production-config comparison will be even noisier here than it
+was for Tier 1's single extra column.
 
 ---
 
@@ -273,6 +313,119 @@ val PR-AUC (0.531). 127 leaves are needed to partition card2's 400+ unique codes
 **Train-val gap** is significant (especially PR-AUC). Expected for no-tuning baseline
 with high-cardinality categoricals. Feature engineering (Phase 2) should close it.
 
+**Note (session 5):** `models/lgb_metrics.json` had drifted out of sync with this
+table — it held results from the earlier `num_leaves=63` experiment referenced
+above (val PR-AUC 0.531) rather than the final `num_leaves=127` config already in
+`pipeline.py`. Confirmed via `git diff` that `pipeline.py`/`utils.py` were
+unchanged since commit `7938f8a`, so this was a stale artifact, not a code
+regression. Fixed by re-running `phase1_baseline/pipeline.py`, which reproduced
+this table's numbers exactly (val ROC-AUC 0.9125, PR-AUC 0.5464, best round 89).
+
+---
+
+## Phase 2 Tier 1 — Within-Row Feature Engineering (Results)
+
+`phase2_feature_engineering/feature_engineering.py` + `pipeline.py`. Adds 10
+within-row features to each fold before the unchanged Phase 1 `Preprocessor`
+runs: `hour_of_day`, `day_of_week`, `local_hour`, `has_true_local_hour`,
+`log1p_TransactionAmt`, `is_round_amount`, `P_email_matches_R_email`,
+`P_email_is_free`, `browser_name`, `os_name`. No fitting involved in any of
+these — each is a deterministic per-row function, so they're computed
+independently on train/val/test with no leakage risk.
+
+**Assumption confirmed with user:** raw `id_30`/`id_31` are kept alongside the
+parsed `os_name`/`browser_name` family columns rather than replaced, so
+version-specific signal (e.g. an outdated browser correlating with fraud)
+isn't discarded. Free-email prefix list and browser/OS family buckets were
+built from the actual unique values in the training data, not guessed.
+
+**`local_hour` coverage is thinner than it looks:** `id_14` (the timezone
+offset used to correct `TransactionDT` to local wall-clock time) is populated
+for only **13.6%** of all rows, not the ~24% that have any identity record —
+most identity rows lack `id_14` specifically. `local_hour` falls back to a
+copy of `hour_of_day` for the other 86.4%. `has_true_local_hour` (`id_14`
+notnull) was added so the model can separate the two populations rather than
+rediscover the distinction indirectly. See ablation results below — it earns
+its place.
+
+### Methodology note: feature-count sensitivity in subsampled training
+
+Discovered while testing `has_true_local_hour` in isolation: LightGBM's
+`feature_fraction=0.8` and XGBoost's `colsample_bytree=0.8` randomly
+subsample columns each round, seeded by a fixed seed. That seed only
+reproduces the same draw for a fixed column count — adding or removing even
+one column reshuffles the entire subsequent random sampling sequence,
+producing a materially different model for reasons unrelated to whether the
+added column carries information. Symptom: adding the single
+`has_true_local_hour` column moved LightGBM's early-stopping round from 122
+to 67 and its val PR-AUC from 0.5579 to 0.5390 in the production config —
+looked like the flag actively hurt, which turned out to be an artifact.
+
+**Fix:** `train_lgb`/`train_xgb` (`phase1_baseline/pipeline.py`) now accept
+`feature_fraction`/`colsample_bytree` overrides. Setting both to `1.0`
+disables column subsampling, which removes this confound (row subsampling —
+`bagging_fraction`/`subsample` — is untouched since row count doesn't change
+across feature-engineering configs, so it isn't a confound). This ablation
+mode (`phase2_feature_engineering/ablation_check.py`) is now the standard
+way to test whether a new feature genuinely helps, before trusting a
+production-config (0.8 subsampling) comparison. **Adopt this for Tier 2**,
+where many more columns will be added at once.
+
+### Controlled ablation results (subsampling disabled — trustworthy)
+
+| Config | Model | ROC-AUC | PR-AUC |
+|---|---|---|---|
+| Phase 1 (raw) | LightGBM | 0.9037 | 0.5435 |
+| Phase 1 (raw) | XGBoost | 0.9190 | 0.5697 |
+| Tier 1, no `has_true_local_hour` | LightGBM | 0.9068 | 0.5326 |
+| Tier 1, no `has_true_local_hour` | XGBoost | 0.9173 | 0.5737 |
+| Tier 1, with `has_true_local_hour` | LightGBM | 0.9072 | **0.5509** |
+| Tier 1, with `has_true_local_hour` | XGBoost | 0.9173 | 0.5737 |
+
+Two findings, both clean under this control:
+- **`has_true_local_hour` genuinely helps LightGBM** (+0.0183 PR-AUC over
+  Tier 1 without it) and is a **complete no-op for XGBoost** — predictions
+  are bit-identical with or without it. Plausible read: LightGBM's
+  histogram-based splitting benefits from the explicit flag; XGBoost already
+  extracts the same information some other way (likely splitting directly
+  on `id_14`'s own missingness). Kept the flag.
+- **Tier 1's true marginal value over raw Phase 1 is smaller than the
+  noisy production-config numbers suggested**: LightGBM +0.0074 PR-AUC,
+  XGBoost +0.0040 PR-AUC. Real, but modest — consistent with most
+  predictive signal already living in the anonymized V columns.
+
+### Production-config results (validation set, 0.8 subsampling — current shipped model)
+
+| Model | Metric | Phase 1 | Phase 2 Tier 1 | Delta |
+|---|---|---|---|---|
+| LightGBM | ROC-AUC | 0.9125 | 0.9082 | -0.0043 |
+| LightGBM | PR-AUC | 0.5464 | 0.5390 | -0.0074 |
+| XGBoost | ROC-AUC | 0.9170 | 0.9180 | +0.0010 |
+| XGBoost | PR-AUC | 0.5714 | 0.5778 | +0.0064 |
+
+Take this table with the methodology note above in mind — at this feature-
+count scale, single-seed deltas of ±0.01-0.02 PR-AUC are within the noise
+band created by subsampling reshuffling, not necessarily real effects. The
+ablation table is the trustworthy read on whether Tier 1 helps; this table
+is the actual current production checkpoint, included for completeness.
+
+**Train-val gap** widened for LightGBM in the production config (train
+PR-AUC 0.864 → ~0.83-0.91 depending on run, val PR-AUC roughly flat) —
+consistent with early-stopping round also swinging with the subsampling
+noise (89 → 67-122 depending on exact feature set). XGBoost's gap moved
+much less. Worth retuning `num_leaves`/`min_child_samples` before drawing
+firm conclusions about overfitting from any single production run.
+
+**Feature importance:** none of the 10 new features reached LightGBM's top
+15. `P_email_matches_R_email` reached XGBoost's top 12 — the one new feature
+with a clearly visible individual contribution across runs.
+
+**Interpretation:** Tier 1 features are a net positive on the metric that
+matters (PR-AUC) but a modest one, not a step change — confirmed by the
+clean ablation, not just the noisier production numbers. Card-level velocity
+aggregates (Tier 2) are the more likely source of a larger gain, if the C
+columns turn out not to already cover it.
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
@@ -314,13 +467,20 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (end of session 4):**
+**Current state (end of session 5):**
 - main: Phase 1 complete and merged (PR #1)
-- `phase1_baseline/pipeline.py`, `CLAUDE.md`, feature importance HTMLs, and JSON
-  metrics all on main
-- No active feature branch — clean slate for Phase 2
-- **Next action:** create `feature/phase2-feature-engineering` branch, implement
-  Tier 1 within-row features, re-run pipeline, compare against Phase 1 baseline
+- Branch `feature/phase2-feature-engineering`: 3 commits already made (stale
+  metrics fix, Tier 1 feature engineering, `.gitattributes` housekeeping).
+  Since then: added `has_true_local_hour`, discovered and fixed the
+  feature-count/subsampling confound, built `ablation_check.py`, validated
+  the flag via controlled ablation, and scoped Tier 2 (see sections above).
+  Not yet committed.
+- **Next action:** commit the `has_true_local_hour` + ablation-methodology
+  work as one unit, then push and open the PR. After merge: start Tier 2
+  card-level aggregates (grouping keys and feature types scoped above),
+  starting with the C/D-column correlation triage before building anything.
+  Cost-Sensitive Decision Framework is explicitly on hold until feature
+  engineering is judged to have run its course.
 
 ---
 
@@ -332,10 +492,11 @@ When starting a new session:
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status` and `git log --oneline` to see current state
-6. **Next action:** Create `feature/phase2-feature-engineering` branch and implement
-   Tier 1 within-row features (see Phase 2 section below for full list)
+6. **Next action:** confirm commit split and open the Phase 2 Tier 1 PR (see
+   "Current state" above). After merge, decide Tier 2 vs Cost-Sensitive
+   Decision Framework as the next phase.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
-   `local_hour` is valid. Implement in Phase 2 Tier 1.
+   `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 
 ---
 
@@ -354,3 +515,8 @@ When starting a new session:
 | addr2 treatment | Binary `is_us` | Preserves non-US signal; near-zero variance otherwise |
 | TransactionDT timezone | Single reference point confirmed | id_14-adjusted local_hour is valid for Phase 2 |
 | High-card string encoding | LightGBM native categorical | Avoids target-encoding leakage; OHE threshold = 10 unique values |
+| Tier 1 browser/OS columns | Keep raw id_30/id_31 alongside parsed browser_name/os_name | Confirmed with user: avoids discarding version-specific signal; trees tolerate redundant features |
+| Tier 1 outputs | Written to phase2_feature_engineering/ + models/*_phase2_* | Avoids overwriting Phase 1 baseline artifacts, keeps before/after comparable |
+| has_true_local_hour flag | Keep | Controlled ablation: +0.018 PR-AUC for LightGBM, exact no-op for XGBoost — real gain, no downside |
+| Feature-count comparisons | Use ablation mode (subsampling=1.0) to validate any single feature, not the production config | Fixed seed + column subsampling reshuffles the whole random draw when column count changes; production-config deltas below ~0.02 PR-AUC aren't trustworthy on their own |
+| Tier 2 grouping key | Not yet decided — candidates scoped, C/D-column correlation triage first | Avoid re-engineering signal Vesta's C columns already provide; validate before building |

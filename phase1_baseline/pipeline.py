@@ -248,7 +248,7 @@ def to_xgb(X):
 # Training
 # ---------------------------------------------------------------------------
 
-def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols):
+def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction=0.8):
     print("\nTraining LightGBM...")
 
     # Combine category-dtype cols (auto-detected) with the numeric categorical
@@ -268,7 +268,7 @@ def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols):
         "learning_rate":      0.05,
         "num_leaves":         127,
         "min_child_samples":  50,
-        "feature_fraction":   0.8,
+        "feature_fraction":   feature_fraction,
         "bagging_fraction":   0.8,
         "bagging_freq":       5,
         "is_unbalance":       True,  # equivalent to class_weight='balanced'
@@ -292,7 +292,7 @@ def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols):
     return model
 
 
-def train_xgb(X_train, y_train, X_val, y_val):
+def train_xgb(X_train, y_train, X_val, y_val, colsample_bytree=0.8):
     print("\nTraining XGBoost...")
 
     X_tr = to_xgb(X_train)
@@ -306,7 +306,7 @@ def train_xgb(X_train, y_train, X_val, y_val):
         learning_rate=0.05,
         max_depth=6,
         subsample=0.8,
-        colsample_bytree=0.8,
+        colsample_bytree=colsample_bytree,
         scale_pos_weight=neg / pos,
         eval_metric=["auc", "aucpr"],
         early_stopping_rounds=50,
