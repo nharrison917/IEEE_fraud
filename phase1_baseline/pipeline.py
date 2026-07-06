@@ -248,7 +248,8 @@ def to_xgb(X):
 # Training
 # ---------------------------------------------------------------------------
 
-def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction=0.8):
+def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction=0.8,
+              sample_weight=None, params_override=None):
     print("\nTraining LightGBM...")
 
     # Combine category-dtype cols (auto-detected) with the numeric categorical
@@ -258,7 +259,8 @@ def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction
         + [c for c in numeric_cat_cols if c in X_train.columns]
     )
 
-    dtrain = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_features)
+    dtrain = lgb.Dataset(X_train, label=y_train, weight=sample_weight,
+                         categorical_feature=cat_features)
     dval   = lgb.Dataset(X_val,   label=y_val,   categorical_feature=cat_features,
                          reference=dtrain)
 
@@ -276,6 +278,8 @@ def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction
         "n_jobs":             -1,
         "seed":               42,
     }
+    if params_override:
+        params.update(params_override)
 
     model = lgb.train(
         params,
@@ -292,7 +296,8 @@ def train_lgb(X_train, y_train, X_val, y_val, numeric_cat_cols, feature_fraction
     return model
 
 
-def train_xgb(X_train, y_train, X_val, y_val, colsample_bytree=0.8):
+def train_xgb(X_train, y_train, X_val, y_val, colsample_bytree=0.8, sample_weight=None,
+              params_override=None):
     print("\nTraining XGBoost...")
 
     X_tr = to_xgb(X_train)
@@ -301,23 +306,28 @@ def train_xgb(X_train, y_train, X_val, y_val, colsample_bytree=0.8):
     neg = int((y_train == 0).sum())
     pos = int((y_train == 1).sum())
 
-    model = xgb.XGBClassifier(
-        n_estimators=2000,
-        learning_rate=0.05,
-        max_depth=6,
-        subsample=0.8,
-        colsample_bytree=colsample_bytree,
-        scale_pos_weight=neg / pos,
-        eval_metric=["auc", "aucpr"],
-        early_stopping_rounds=50,
-        tree_method="hist",
-        n_jobs=-1,
-        random_state=42,
-        verbosity=1,
-    )
+    xgb_params = {
+        "n_estimators":         2000,
+        "learning_rate":        0.05,
+        "max_depth":            6,
+        "subsample":            0.8,
+        "colsample_bytree":     colsample_bytree,
+        "scale_pos_weight":     neg / pos,
+        "eval_metric":          ["auc", "aucpr"],
+        "early_stopping_rounds": 50,
+        "tree_method":          "hist",
+        "n_jobs":               -1,
+        "random_state":         42,
+        "verbosity":            1,
+    }
+    if params_override:
+        xgb_params.update(params_override)
+
+    model = xgb.XGBClassifier(**xgb_params)
 
     model.fit(
         X_tr, y_train,
+        sample_weight=sample_weight,
         eval_set=[(X_tr, y_train), (X_vl, y_val)],
         verbose=100,
     )
