@@ -116,9 +116,9 @@ def main():
     val_raw   = add_tier1_features(val_raw)
     test_raw  = add_tier1_features(test_raw)
     new_cols = [
-        "hour_of_day", "day_of_week", "local_hour", "log1p_TransactionAmt",
-        "is_round_amount", "P_email_matches_R_email", "P_email_is_free",
-        "browser_name", "os_name",
+        "hour_of_day", "day_of_week", "local_hour", "has_true_local_hour",
+        "log1p_TransactionAmt", "is_round_amount", "P_email_matches_R_email",
+        "P_email_is_free", "browser_name", "os_name",
     ]
     print(f"  Added columns: {new_cols}")
 

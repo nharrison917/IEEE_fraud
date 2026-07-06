@@ -1,122 +1,122 @@
 [
   {
-    "feature":"V218",
-    "importance":0.0778975636
-  },
-  {
     "feature":"V258",
-    "importance":0.075416185
+    "importance":0.1109441668
   },
   {
-    "feature":"V257",
-    "importance":0.0354945362
-  },
-  {
-    "feature":"V294",
-    "importance":0.0348897241
+    "feature":"V218",
+    "importance":0.0302474443
   },
   {
     "feature":"V70",
-    "importance":0.0327173173
+    "importance":0.028522471
   },
   {
-    "feature":"V201",
-    "importance":0.020395061
-  },
-  {
-    "feature":"C8",
-    "importance":0.0197229777
+    "feature":"V294",
+    "importance":0.0277610384
   },
   {
     "feature":"V91",
-    "importance":0.0193738714
+    "importance":0.022174336
+  },
+  {
+    "feature":"C8",
+    "importance":0.0179281998
   },
   {
     "feature":"V187",
-    "importance":0.0188120659
-  },
-  {
-    "feature":"M4__missing",
-    "importance":0.0139650526
-  },
-  {
-    "feature":"C14",
-    "importance":0.0120250089
-  },
-  {
-    "feature":"P_email_matches_R_email",
-    "importance":0.0107012112
-  },
-  {
-    "feature":"V308",
-    "importance":0.0083293188
-  },
-  {
-    "feature":"V30",
-    "importance":0.0081713265
-  },
-  {
-    "feature":"V90",
-    "importance":0.0075677652
-  },
-  {
-    "feature":"card6__credit",
-    "importance":0.0074402732
-  },
-  {
-    "feature":"id_34__match_status_2",
-    "importance":0.0067989295
-  },
-  {
-    "feature":"V163",
-    "importance":0.0061461092
+    "importance":0.0177508108
   },
   {
     "feature":"is_us",
-    "importance":0.0060006683
+    "importance":0.0174267478
   },
   {
-    "feature":"V283",
-    "importance":0.0056149736
+    "feature":"ProductCD__C",
+    "importance":0.0163583644
+  },
+  {
+    "feature":"D2_was_missing",
+    "importance":0.0148430346
+  },
+  {
+    "feature":"V308",
+    "importance":0.0113015957
+  },
+  {
+    "feature":"V317",
+    "importance":0.0112346401
+  },
+  {
+    "feature":"C14",
+    "importance":0.0109702265
+  },
+  {
+    "feature":"V201",
+    "importance":0.0105329417
+  },
+  {
+    "feature":"M4__missing",
+    "importance":0.0103617758
   },
   {
     "feature":"V280",
-    "importance":0.0050364411
+    "importance":0.0095768813
   },
   {
-    "feature":"V312",
-    "importance":0.0050134533
+    "feature":"V30",
+    "importance":0.0091021936
   },
   {
-    "feature":"C10",
-    "importance":0.0049578324
+    "feature":"id_35__F",
+    "importance":0.0081157023
   },
   {
-    "feature":"card6__debit",
-    "importance":0.0048897918
-  },
-  {
-    "feature":"C1",
-    "importance":0.0043302164
-  },
-  {
-    "feature":"DeviceType__mobile",
-    "importance":0.0042631105
-  },
-  {
-    "feature":"V327",
-    "importance":0.0041892235
+    "feature":"C4",
+    "importance":0.0078256093
   },
   {
     "feature":"V71",
-    "importance":0.004155382
+    "importance":0.0077434643
   },
   {
-    "feature":"ProductCD__R",
-    "importance":0.0040906658
+    "feature":"card6__credit",
+    "importance":0.0076914234
+  },
+  {
+    "feature":"C10",
+    "importance":0.0076623196
+  },
+  {
+    "feature":"has_true_local_hour",
+    "importance":0.0069809034
+  },
+  {
+    "feature":"P_email_matches_R_email",
+    "importance":0.0068192505
+  },
+  {
+    "feature":"V283",
+    "importance":0.0064767445
+  },
+  {
+    "feature":"card6__debit",
+    "importance":0.0064308112
+  },
+  {
+    "feature":"V312",
+    "importance":0.0061612921
+  },
+  {
+    "feature":"V281",
+    "importance":0.0049194428
+  },
+  {
+    "feature":"DeviceType__mobile",
+    "importance":0.0047659525
   },
   {
     "feature":"V64",
-    "importance":0.0040441439
+    "importance":0.0043787002
   }
 ]

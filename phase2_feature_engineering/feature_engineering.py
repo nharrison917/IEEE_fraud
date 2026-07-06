@@ -103,15 +103,21 @@ def add_tier1_features(df):
 
     # local_hour: id_14 is the identity session's timezone offset in minutes.
     # TransactionDT + offset, wrapped to a 24h clock, approximates true local
-    # wall-clock hour for the ~24% of rows with an identity record -- this
-    # assumption (TransactionDT is UTC) was confirmed valid in a prior
-    # session (see PLAN.md Session Resumption Checklist). Falls back to the
-    # UTC-relative hour_of_day where id_14 is absent.
+    # wall-clock hour -- this assumption (TransactionDT is UTC) was confirmed
+    # valid in a prior session (see PLAN.md Session Resumption Checklist).
+    # Falls back to the UTC-relative hour_of_day where id_14 is absent.
+    #
+    # id_14 coverage is only 13.6% of all rows (not the full ~24% that have
+    # any identity record -- most identity rows lack id_14 specifically), so
+    # the fallback population dominates this column. has_true_local_hour
+    # marks which rows got a real correction vs. a hour_of_day copy, so the
+    # model doesn't have to rediscover that distinction by conditioning on
+    # id_14's own missingness elsewhere in the tree.
+    has_offset = df["id_14"].notnull()
     offset_seconds = df["id_14"].fillna(0) * 60
     raw_local_hour = ((df["TransactionDT"] + offset_seconds) % _SECONDS_IN_DAY) // 3600
-    df["local_hour"] = np.where(
-        df["id_14"].notnull(), raw_local_hour, df["hour_of_day"]
-    ).astype(int)
+    df["local_hour"] = np.where(has_offset, raw_local_hour, df["hour_of_day"]).astype(int)
+    df["has_true_local_hour"] = has_offset.astype(int)
 
     # --- Amount features -----------------------------------------------
     df["log1p_TransactionAmt"] = np.log1p(df["TransactionAmt"])

@@ -202,12 +202,52 @@ clean before/after story for the write-up and portfolio.
 - Parsed `browser_name` from id_31 (drop version strings)
 - Parsed `os_name` from id_30
 
-**Tier 2 — card-level aggregates (leakage risk, defer or skip):**
-Velocity features (count per card per time window, amount std per card, etc.)
-require expanding-window computation to avoid future leakage. The C columns
-(Vesta's pre-computed counting features) already cover most of this correctly.
-Use C columns instead of re-engineering unless baseline feature importance
-shows they're insufficient.
+**Tier 2 — card-level aggregates (planning, session 5):**
+
+Not yet implemented. Everything shipped so far (Tier 1) is within-row only;
+Tier 2 is the first pass at relational/behavioral features — the actual
+reason this dataset was chosen over the PCA-anonymized prior project.
+
+*Candidate grouping keys (proxy "entities" to aggregate by, since there's no
+true customer ID):*
+- `card1` alone — most granular, simplest starting point (11,735 uniques)
+- `card1 + card2 + card3 + card5 + addr1` — tighter "account-like" proxy
+- `DeviceInfo` / `id_31` — device-based identity, orthogonal to card-based
+- Reconstructed UID via `D1` (`TransactionDT_days - D1` ≈ constant per
+  account) — a documented technique from public IEEE-CIS Kaggle solutions,
+  not an original derivation. Validate that it actually clusters into
+  stable groups before trusting it.
+
+*Candidate feature types per entity (all causal/expanding-window):*
+- Velocity: count of prior transactions for the entity; count in last 1h/24h/7d
+- Recency: time since entity's previous transaction
+- Behavioral baseline: expanding mean/std of `TransactionAmt`; z-score of
+  current amount against it
+- Diversity: count of distinct `addr1`/`P_emaildomain`/`DeviceInfo` seen for
+  the entity so far
+
+*Triage before building all of this:* `C1`, `C13`, `C14` already rank in
+both models' top-15 importance (Vesta's own counting features carry real
+signal). Build one or two candidates first (e.g. card1's 24h transaction
+count, amount z-score) and correlate them against the existing C/D columns
+before investing further — high correlation means redundant, not novel.
+
+*Leakage discipline — different from everything built so far:* Tier 1 and
+the Preprocessor both follow "fit on train, apply to val/test." Tier 2
+aggregates follow a different rule: each row's feature must only use
+transactions strictly earlier in time for that entity, computed via
+expanding/rolling operations on the full timeline sorted by entity+time,
+*before* the train/val/test split — not after. This is legitimate (a
+deployed model has access to a card's full prior history, including what
+falls inside the "train window" here), but a naive `groupby().transform()`
+silently includes future rows. This is the highest leakage-risk part of
+Tier 2 and needs explicit test coverage, not just careful reading.
+
+*Methodology carryover:* use ablation mode (`feature_fraction=1.0`,
+`colsample_bytree=1.0` via `ablation_check.py`) to evaluate Tier 2 features
+individually or in small groups, given how many columns Tier 2 will add at
+once — the production-config comparison will be even noisier here than it
+was for Tier 1's single extra column.
 
 ---
 
@@ -285,14 +325,13 @@ this table's numbers exactly (val ROC-AUC 0.9125, PR-AUC 0.5464, best round 89).
 
 ## Phase 2 Tier 1 — Within-Row Feature Engineering (Results)
 
-`phase2_feature_engineering/feature_engineering.py` + `pipeline.py`. Adds the
-9 within-row features from the Feature Engineering section above
-(`hour_of_day`, `day_of_week`, `local_hour`, `log1p_TransactionAmt`,
-`is_round_amount`, `P_email_matches_R_email`, `P_email_is_free`,
-`browser_name`, `os_name`) to each fold before the unchanged Phase 1
-`Preprocessor` runs. No fitting involved in any of these — each is a
-deterministic per-row function, so they're computed independently on
-train/val/test with no leakage risk.
+`phase2_feature_engineering/feature_engineering.py` + `pipeline.py`. Adds 10
+within-row features to each fold before the unchanged Phase 1 `Preprocessor`
+runs: `hour_of_day`, `day_of_week`, `local_hour`, `has_true_local_hour`,
+`log1p_TransactionAmt`, `is_round_amount`, `P_email_matches_R_email`,
+`P_email_is_free`, `browser_name`, `os_name`. No fitting involved in any of
+these — each is a deterministic per-row function, so they're computed
+independently on train/val/test with no leakage risk.
 
 **Assumption confirmed with user:** raw `id_30`/`id_31` are kept alongside the
 parsed `os_name`/`browser_name` family columns rather than replaced, so
@@ -300,38 +339,92 @@ version-specific signal (e.g. an outdated browser correlating with fraud)
 isn't discarded. Free-email prefix list and browser/OS family buckets were
 built from the actual unique values in the training data, not guessed.
 
-### Results (validation set, vs corrected Phase 1 baseline)
+**`local_hour` coverage is thinner than it looks:** `id_14` (the timezone
+offset used to correct `TransactionDT` to local wall-clock time) is populated
+for only **13.6%** of all rows, not the ~24% that have any identity record —
+most identity rows lack `id_14` specifically. `local_hour` falls back to a
+copy of `hour_of_day` for the other 86.4%. `has_true_local_hour` (`id_14`
+notnull) was added so the model can separate the two populations rather than
+rediscover the distinction indirectly. See ablation results below — it earns
+its place.
+
+### Methodology note: feature-count sensitivity in subsampled training
+
+Discovered while testing `has_true_local_hour` in isolation: LightGBM's
+`feature_fraction=0.8` and XGBoost's `colsample_bytree=0.8` randomly
+subsample columns each round, seeded by a fixed seed. That seed only
+reproduces the same draw for a fixed column count — adding or removing even
+one column reshuffles the entire subsequent random sampling sequence,
+producing a materially different model for reasons unrelated to whether the
+added column carries information. Symptom: adding the single
+`has_true_local_hour` column moved LightGBM's early-stopping round from 122
+to 67 and its val PR-AUC from 0.5579 to 0.5390 in the production config —
+looked like the flag actively hurt, which turned out to be an artifact.
+
+**Fix:** `train_lgb`/`train_xgb` (`phase1_baseline/pipeline.py`) now accept
+`feature_fraction`/`colsample_bytree` overrides. Setting both to `1.0`
+disables column subsampling, which removes this confound (row subsampling —
+`bagging_fraction`/`subsample` — is untouched since row count doesn't change
+across feature-engineering configs, so it isn't a confound). This ablation
+mode (`phase2_feature_engineering/ablation_check.py`) is now the standard
+way to test whether a new feature genuinely helps, before trusting a
+production-config (0.8 subsampling) comparison. **Adopt this for Tier 2**,
+where many more columns will be added at once.
+
+### Controlled ablation results (subsampling disabled — trustworthy)
+
+| Config | Model | ROC-AUC | PR-AUC |
+|---|---|---|---|
+| Phase 1 (raw) | LightGBM | 0.9037 | 0.5435 |
+| Phase 1 (raw) | XGBoost | 0.9190 | 0.5697 |
+| Tier 1, no `has_true_local_hour` | LightGBM | 0.9068 | 0.5326 |
+| Tier 1, no `has_true_local_hour` | XGBoost | 0.9173 | 0.5737 |
+| Tier 1, with `has_true_local_hour` | LightGBM | 0.9072 | **0.5509** |
+| Tier 1, with `has_true_local_hour` | XGBoost | 0.9173 | 0.5737 |
+
+Two findings, both clean under this control:
+- **`has_true_local_hour` genuinely helps LightGBM** (+0.0183 PR-AUC over
+  Tier 1 without it) and is a **complete no-op for XGBoost** — predictions
+  are bit-identical with or without it. Plausible read: LightGBM's
+  histogram-based splitting benefits from the explicit flag; XGBoost already
+  extracts the same information some other way (likely splitting directly
+  on `id_14`'s own missingness). Kept the flag.
+- **Tier 1's true marginal value over raw Phase 1 is smaller than the
+  noisy production-config numbers suggested**: LightGBM +0.0074 PR-AUC,
+  XGBoost +0.0040 PR-AUC. Real, but modest — consistent with most
+  predictive signal already living in the anonymized V columns.
+
+### Production-config results (validation set, 0.8 subsampling — current shipped model)
 
 | Model | Metric | Phase 1 | Phase 2 Tier 1 | Delta |
 |---|---|---|---|---|
-| LightGBM | ROC-AUC | 0.9125 | 0.9083 | -0.0042 |
-| LightGBM | PR-AUC | 0.5464 | 0.5579 | **+0.0115** |
-| XGBoost | ROC-AUC | 0.9170 | 0.9161 | -0.0009 |
-| XGBoost | PR-AUC | 0.5714 | 0.5823 | **+0.0109** |
+| LightGBM | ROC-AUC | 0.9125 | 0.9082 | -0.0043 |
+| LightGBM | PR-AUC | 0.5464 | 0.5390 | -0.0074 |
+| XGBoost | ROC-AUC | 0.9170 | 0.9180 | +0.0010 |
+| XGBoost | PR-AUC | 0.5714 | 0.5778 | +0.0064 |
 
-PR-AUC (primary metric) improved modestly for both models; ROC-AUC is flat to
-slightly down, within run-to-run noise range for a single seed.
+Take this table with the methodology note above in mind — at this feature-
+count scale, single-seed deltas of ±0.01-0.02 PR-AUC are within the noise
+band created by subsampling reshuffling, not necessarily real effects. The
+ablation table is the trustworthy read on whether Tier 1 helps; this table
+is the actual current production checkpoint, included for completeness.
 
-**Train-val gap widened for LightGBM:** train PR-AUC rose from 0.864 to 0.911
-while val PR-AUC only rose by 0.012 (gap: 0.237 → 0.353). LightGBM also trained
-longer before early stopping (89 → 122 rounds) — plausible explanation is that
-`feature_fraction=0.8` samples a different random column subset each round now
-that there are more columns (508 → 523), changing training dynamics even under
-the same seed. XGBoost's gap moved much less (0.256 → 0.271, 648 → 753 rounds).
-Worth watching if Tier 2 adds more features — LightGBM may need retuning
-(`num_leaves`, `min_child_samples`) rather than assuming more features are free.
+**Train-val gap** widened for LightGBM in the production config (train
+PR-AUC 0.864 → ~0.83-0.91 depending on run, val PR-AUC roughly flat) —
+consistent with early-stopping round also swinging with the subsampling
+noise (89 → 67-122 depending on exact feature set). XGBoost's gap moved
+much less. Worth retuning `num_leaves`/`min_child_samples` before drawing
+firm conclusions about overfitting from any single production run.
 
-**Feature importance:** none of the 9 new features reached LightGBM's top 15 —
-its PR-AUC gain isn't attributable to any single dominant new feature.
-`P_email_matches_R_email` reached XGBoost's top 12, the one new feature with a
-clearly visible individual contribution.
+**Feature importance:** none of the 10 new features reached LightGBM's top
+15. `P_email_matches_R_email` reached XGBoost's top 12 — the one new feature
+with a clearly visible individual contribution across runs.
 
 **Interpretation:** Tier 1 features are a net positive on the metric that
-matters (PR-AUC) but a modest one, not a step change. This is consistent with
-the EDA finding that the anonymized V columns already carry most of the
-predictive signal — within-row engineered features add at the margins.
-Card-level velocity aggregates (Tier 2) are the more likely source of a larger
-gain, if the C columns turn out not to already cover it.
+matters (PR-AUC) but a modest one, not a step change — confirmed by the
+clean ablation, not just the noisier production numbers. Card-level velocity
+aggregates (Tier 2) are the more likely source of a larger gain, if the C
+columns turn out not to already cover it.
 
 ---
 
@@ -376,15 +469,18 @@ model run time rather than loading raw data in the app. Confirm at build time.
 
 **Current state (end of session 5):**
 - main: Phase 1 complete and merged (PR #1)
-- Branch `feature/phase2-feature-engineering`: Tier 1 within-row features
-  implemented and evaluated (`phase2_feature_engineering/`); results above.
-  Also fixed the stale `models/lgb_metrics.json` artifact (see note above)
-  by re-running Phase 1 with unchanged code.
-- Not yet committed or pushed — pending user confirmation.
-- **Next action:** confirm commit split (Phase 1 metrics fix vs Tier 1 feature
-  work), commit, push, open PR. After merge: decide whether to pursue Tier 2
-  card-level aggregates or move to the Phase 2 Cost-Sensitive Decision
-  Framework section below.
+- Branch `feature/phase2-feature-engineering`: 3 commits already made (stale
+  metrics fix, Tier 1 feature engineering, `.gitattributes` housekeeping).
+  Since then: added `has_true_local_hour`, discovered and fixed the
+  feature-count/subsampling confound, built `ablation_check.py`, validated
+  the flag via controlled ablation, and scoped Tier 2 (see sections above).
+  Not yet committed.
+- **Next action:** commit the `has_true_local_hour` + ablation-methodology
+  work as one unit, then push and open the PR. After merge: start Tier 2
+  card-level aggregates (grouping keys and feature types scoped above),
+  starting with the C/D-column correlation triage before building anything.
+  Cost-Sensitive Decision Framework is explicitly on hold until feature
+  engineering is judged to have run its course.
 
 ---
 
@@ -421,3 +517,6 @@ When starting a new session:
 | High-card string encoding | LightGBM native categorical | Avoids target-encoding leakage; OHE threshold = 10 unique values |
 | Tier 1 browser/OS columns | Keep raw id_30/id_31 alongside parsed browser_name/os_name | Confirmed with user: avoids discarding version-specific signal; trees tolerate redundant features |
 | Tier 1 outputs | Written to phase2_feature_engineering/ + models/*_phase2_* | Avoids overwriting Phase 1 baseline artifacts, keeps before/after comparable |
+| has_true_local_hour flag | Keep | Controlled ablation: +0.018 PR-AUC for LightGBM, exact no-op for XGBoost — real gain, no downside |
+| Feature-count comparisons | Use ablation mode (subsampling=1.0) to validate any single feature, not the production config | Fixed seed + column subsampling reshuffles the whole random draw when column count changes; production-config deltas below ~0.02 PR-AUC aren't trustworthy on their own |
+| Tier 2 grouping key | Not yet decided — candidates scoped, C/D-column correlation triage first | Avoid re-engineering signal Vesta's C columns already provide; validate before building |
