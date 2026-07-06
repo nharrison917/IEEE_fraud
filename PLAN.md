@@ -504,6 +504,102 @@ contribution, or normal run-to-run variance that happens to coincide with
 this feature set. Documented as an open question rather than claimed as a
 clean win for both models.
 
+### Error analysis (`error_analysis.py`): the blind spot is concentrated, not random
+
+Data-driven rather than hypothesis-driven — compared the hardest-to-catch
+fraud (bottom quartile of predicted probability, Tier 1 + Tier 2 v3 models)
+against the easiest-to-catch:
+
+| | Hardest misses | Easiest catches |
+|---|---|---|
+| ProductCD = W | ~73–74% | ~1–3% |
+| ProductCD = C | ~17–19% | ~82% |
+| `has_identity` rate | ~25–27% | ~98–99% |
+| `is_round_amount` rate | ~59–60% | ~19–20% |
+| Mean TransactionAmt | ~185–194 | ~90–93 |
+| `addr1_changed_from_prev` rate | ~15–16% | ~5.3–5.4% |
+
+Same pattern for both models independently. The model is excellent when
+identity/device data is present (98–99% of easy catches have it) and close
+to blind when it's absent — consistent with the Phase 1 EDA finding that a
+large share of V-columns only exist when identity data is present, so a
+non-identity transaction is genuinely missing a chunk of the feature space,
+not just lacking a feature we haven't built yet. Two more specific
+findings: **higher-dollar fraud is harder to catch** (mean amount ~190 in
+misses vs. ~90 in catches — the more expensive mistake), and **round-dollar
+amounts are much harder to catch** (60% of misses vs. 20% of catches).
+`addr1_changed_from_prev` is higher among misses than catches even though it
+predicts *lower* fraud rate overall — coherent, since address-change fraud
+structurally resembles a legitimate multi-location shopper, making it
+genuinely harder to distinguish on the rare occasions it does happen.
+
+**Model overlap:** 66.5% of each model's hardest-quartile misses are shared
+— a real, common blind spot neither model resolves alone. The remaining
+~33% are model-specific, which an ensemble could plausibly rescue, but
+wouldn't touch the majority shared blind spot.
+
+Signals available specifically for the non-identity population that haven't
+had dedicated feature engineering yet: `dist1` (present only in non-identity
+transactions) and the V-group that's 16.2–18% missing (correlates -0.64 to
+-0.72 with identity — "the non-identity transaction path" per the Phase 1
+EDA). Flagged as a possible next angle, not yet pursued.
+
+### Segmented model (planned, session 6): has_identity=1 vs. has_identity=0
+
+Motivated directly by the error analysis: identity presence is the single
+dominant driver of catchability, and a single global model may be
+under-serving the harder segment. Mechanism: gradient boosting takes the
+splits that reduce loss most; if the identity-present population offers
+bigger, easier gains per split (richer signal), the model's limited round
+budget gets pulled toward optimizing it, and early stopping triggers on the
+*aggregate* metric — which can plateau because the easy segment is already
+well-fit, even while the hard segment still has headroom. This is a known
+issue with heterogeneous subpopulations in one global model, not specific to
+this dataset.
+
+**Segment fraud rates confirm a real divergence** (`segment_analysis.py`,
+train fold): `has_identity=1` → 6.73%, `has_identity=0` → 2.12% (3.2x). But
+it isn't temporally stable:
+
+| Fold | `has_identity=1` share | `has_identity=1` rate | `has_identity=0` rate |
+|---|---|---|---|
+| Train | 27.5% | 6.73% | 2.12% |
+| Val | 19.6% | 11.02% | 2.17% |
+| Test | 20.1% | 9.34% | 1.96% |
+
+`has_identity=0` is stable (~2.0–2.2% throughout). `has_identity=1` nearly
+doubles from train to val — initially read as a concerning calibration risk
+for a segmented model, since PLAN.md's existing note about val's slightly
+elevated aggregate fraud rate (3.38%→3.90%) badly understated how much of
+that instability concentrates in this one segment.
+
+**Within-train chronological quarters clarified this rather than deepening the
+concern:**
+
+| Quarter | `has_identity` share | `has_identity=1` rate | `has_identity=0` rate |
+|---|---|---|---|
+| Q1 | 39.7% | 3.60% | 1.99% |
+| Q2 | 35.2% | 5.18% | 1.89% |
+| Q3 | 17.7% | 13.48% | 2.33% |
+| Q4 | 17.3% | 10.14% | 2.18% |
+| Val | 19.6% | 11.02% | 2.17% |
+
+There's a regime shift midway through train (Q2→Q3): identity-capture share
+roughly halves while the identity-segment fraud rate more than doubles —
+plausibly a shift toward more selective, risk-based identity verification,
+though that's a plausible read, not a confirmed mechanism. Critically, **val
+looks like a continuation of Q3/Q4, not a new surprise** — the apparent
+"6.73%→11.02% drift" is an artifact of comparing val against train's
+*blended* average, which is diluted by Q1/Q2's outdated, larger-share/
+lower-rate regime.
+
+**Design decision:** train the `has_identity=1` segment model with
+recency-aware handling (drop or downweight Q1, possibly Q2) so its
+calibration reflects the Q3/Q4-and-later regime that val/test actually show,
+rather than a blend that includes a regime that no longer holds. The
+`has_identity=0` segment showed no such drift and trains on the full train
+fold normally. Not yet implemented — next action.
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
@@ -545,20 +641,22 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (end of session 5):**
+**Current state (end of session 6):**
 - main: Phase 1 complete and merged (PR #1)
-- Branch `feature/phase2-feature-engineering`: 3 commits already made (stale
-  metrics fix, Tier 1 feature engineering, `.gitattributes` housekeeping).
-  Since then: added `has_true_local_hour`, discovered and fixed the
-  feature-count/subsampling confound, built `ablation_check.py`, validated
-  the flag via controlled ablation, and scoped Tier 2 (see sections above).
-  Not yet committed.
-- **Next action:** commit the `has_true_local_hour` + ablation-methodology
-  work as one unit, then push and open the PR. After merge: start Tier 2
-  card-level aggregates (grouping keys and feature types scoped above),
-  starting with the C/D-column correlation triage before building anything.
-  Cost-Sensitive Decision Framework is explicitly on hold until feature
-  engineering is judged to have run its course.
+- `feature/phase2-feature-engineering`: Tier 1 work, 4 commits, PR #2 open
+  (not yet merged) — covers Tier 1 within-row features, the stale-metrics
+  fix, `has_true_local_hour` + the ablation methodology, and `.gitattributes`
+  housekeeping. Scoped independently of everything below; can merge whenever
+  ready without waiting on Tier 2/segmentation.
+- `feature/phase2-tier2-and-segmentation`: new branch (branched from
+  `feature/phase2-feature-engineering`'s tip), covers the Tier 2 v1→v2→v3
+  journey, the error analysis, the segment fraud-rate diagnostic, and
+  (not yet built) the segmented model. Not yet pushed or PR'd.
+- **Next action:** implement the segmented model (`has_identity=1` vs.
+  `has_identity=0`, recency-weighted training for the identity segment —
+  see Phase 2 Tier 2 section above for the full rationale). Cost-Sensitive
+  Decision Framework remains on hold until feature/model engineering is
+  judged to have run its course.
 
 ---
 
@@ -569,12 +667,15 @@ When starting a new session:
 2. Open VS Code in `C:\Projects\IEEE_fraud`
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
-5. Check `git status` and `git log --oneline` to see current state
-6. **Next action:** confirm commit split and open the Phase 2 Tier 1 PR (see
-   "Current state" above). After merge, decide Tier 2 vs Cost-Sensitive
-   Decision Framework as the next phase.
+5. Check `git status`, `git branch`, and `git log --oneline` on both open
+   branches to see current state
+6. **Next action:** build the segmented model (see "Current state" above
+   and the Phase 2 Tier 2 section's "Segmented model" subsection for the
+   recency-weighting rationale).
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
+8. `pandas.Series.corr()` crashes this environment outright — see Environment
+   section. Use `DataFrame.corr()` instead.
 
 ---
 
@@ -600,3 +701,7 @@ When starting a new session:
 | Tier 2 grouping key | `card1+card2+card3+card5+D1-adjusted start_day` (not the card-fragment combo alone) | Raw combo conflates ~14 real accounts per entity on average (84.1% of multi-txn combos split into >1 D1-adjusted start-day); validated via addr1-diversity cohesion check before trusting it |
 | Tier 2 addr1 handling | Own feature (`addr1_changed_from_prev` + `addr1_change_x_inverse_time`), not folded into the entity key | Folding it into the key would make an address change look like a new entity (history resets) instead of a flagged event on a continuous account |
 | Tier 2 XGBoost result | Documented as an open question, not a confirmed win | Best aggregate PR-AUC of the investigation (0.5797), but all 6 features rank bottom-half in importance — can't rule out the improvement being incidental to this run |
+| Error analysis | Data-driven pass added alongside hypothesis-driven feature engineering | Found the identity-presence blind spot directly, rather than requiring it to be guessed at in advance |
+| Segmented model | Build `has_identity=1`/`has_identity=0` as separate models rather than one global model | Segment fraud rates diverge 3.2x (train fold); error analysis showed identity presence is the dominant driver of catchability |
+| Segmented model recency handling | Downweight/drop early train quarters for the `has_identity=1` segment only | Within-train quarters show a regime shift (Q2→Q3) in this segment specifically that val/test continue; `has_identity=0` showed no such drift and needs no adjustment |
+| Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |
