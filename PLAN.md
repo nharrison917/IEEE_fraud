@@ -544,7 +544,7 @@ transactions) and the V-group that's 16.2–18% missing (correlates -0.64 to
 -0.72 with identity — "the non-identity transaction path" per the Phase 1
 EDA). Flagged as a possible next angle, not yet pursued.
 
-### Segmented model (planned, session 6): has_identity=1 vs. has_identity=0
+### Segmented model (session 7): has_identity=1 vs. has_identity=0 — RESULTS
 
 Motivated directly by the error analysis: identity presence is the single
 dominant driver of catchability, and a single global model may be
@@ -593,12 +593,88 @@ looks like a continuation of Q3/Q4, not a new surprise** — the apparent
 *blended* average, which is diluted by Q1/Q2's outdated, larger-share/
 lower-rate regime.
 
-**Design decision:** train the `has_identity=1` segment model with
-recency-aware handling (drop or downweight Q1, possibly Q2) so its
-calibration reflects the Q3/Q4-and-later regime that val/test actually show,
-rather than a blend that includes a regime that no longer holds. The
-`has_identity=0` segment showed no such drift and trains on the full train
-fold normally. Not yet implemented — next action.
+Implemented in `phase2_feature_engineering/segmented_pipeline.py`. Trains
+three LightGBM/XGBoost pairs — global (unsegmented), `has_identity=1`
+segment, `has_identity=0` segment — all on the identical Tier 1 + Tier 2
+feature set, all in ablation mode (`feature_fraction=1.0`/
+`colsample_bytree=1.0`) so the comparison isn't confounded by the column-
+subsampling reshuffle documented in the Tier 1 section.
+
+**Recency weighting (user decision, session 7):** rather than a hard
+Q1/Q2 cutoff, the `has_identity=1` segment's training rows get an
+exponential recency weight — `0.5 ** (age_days / 30)`, rescaled to mean
+1.0 — so old-regime rows are downweighted, not discarded. Diagnostic
+confirms the intended shape (mean weight by chronological quarter of the
+segment): Q1 0.432, Q2 0.556, Q3 0.820, Q4 2.193. `has_identity=0` showed
+no such regime shift and trains unweighted.
+
+**First pass — pooled combined metric was misleading.** Concatenating
+both segments' val predictions into one pooled ROC-AUC/PR-AUC made
+segmentation look strictly worse than the global model (LightGBM PR-AUC
+0.5268 vs. 0.5289 global; XGBoost 0.5622 vs. 0.5797 global). A calibration
+check caught why before this was accepted: `is_unbalance` (LightGBM) and
+`scale_pos_weight` (XGBoost) are computed per segment from that segment's
+own class ratio, and `has_identity=0`'s ratio (~46:1) is far more extreme
+than `has_identity=1`'s (~14:1). Mean predicted probability vs. actual
+fraud rate confirms the two segments' models are not on a comparable
+scale: `has_identity=1` LightGBM 1.06x actual rate, XGBoost 1.66x —
+`has_identity=0` LightGBM 4.50x, XGBoost 5.52x. Pooling two differently-
+inflated probability scales into one ranking metric is not a valid
+comparison, regardless of how good either segment model actually is.
+
+**Fair comparison (correct methodology):** score the global model and
+each segment model separately, restricted to that segment's own val rows,
+so no cross-segment pooling occurs and each model is judged purely on its
+own internally-consistent scale.
+
+| Segment | Model | Global (on segment rows) ROC/PR | Segment model ROC/PR | Verdict |
+|---|---|---|---|---|
+| has_identity=1 | LightGBM | 0.9288 / 0.7244 | 0.9314 / 0.7565 | Segment wins both |
+| has_identity=1 | XGBoost  | 0.9400 / 0.7852 | 0.9450 / 0.7937 | Segment wins both |
+| has_identity=0 | LightGBM | 0.8609 / 0.2210 | 0.8489 / 0.2613 | Mixed (ROC down, PR up) |
+| has_identity=0 | XGBoost  | 0.8815 / 0.2451 | 0.8471 / 0.2359 | Global wins both |
+
+`has_identity=1` segmentation is a clean, unambiguous win on both models
+and both metrics — consistent with the error-analysis finding that this
+population carries richer signal (device/identity V-columns) that a
+dedicated model can sharpen without competing for boosting-round budget
+against the much larger `has_identity=0` population.
+
+**`has_identity=0` tuning investigation (`segment_id0_tuning.py`):** before
+accepting the mixed/negative id0 result, tested whether the segment
+model's complexity (127 leaves / depth 6, tuned implicitly for the full
+354k-row dataset) was overfitting a segment with fewer fraud examples
+(5,440 vs. the global model's 11,988).
+
+- **LightGBM: regularizing further made it worse** in both directions
+  tried (63 leaves: ROC 0.8463/PR 0.2440; 31 leaves: ROC 0.8424/PR 0.2013,
+  both below the 127-leaf baseline's 0.8489/0.2613) — the original config
+  was not overfitting; it's already close to this segment's standalone
+  ceiling.
+- **XGBoost: regularizing did help**, confirming depth 6 was overfitting
+  this segment — depth 4 recovered real ground (ROC 0.8471→0.8634, PR
+  0.2359→0.2260) — but even the best-tuned config still falls short of
+  the global model's numbers on both metrics (0.8815/0.2451).
+
+No `has_identity=0`-specific configuration, in either direction, beat the
+global model. Read: `has_identity=0` doesn't carry enough self-contained
+distinguishing signal to benefit from specialization, and pooling it with
+`has_identity=1`'s data during training acts as a helpful regularizer/
+diversifier a segment-only model can't replicate by tuning alone —
+consistent with `error_analysis.py`'s original finding that this
+population is a shared, information-limited blind spot rather than a
+modeling shortfall.
+
+**Final architecture decision: hybrid, not full segmentation.** Route
+`has_identity=1` transactions to the dedicated recency-weighted segment
+model; keep using the **global** (unsegmented) Tier 1 + Tier 2 model for
+`has_identity=0` transactions, since no segment-specific variant beat it
+there. Artifacts saved: `models/lgb_global_tier1tier2.txt` +
+`models/xgb_global_tier1tier2.pkl` + `models/preprocessor_global_tier1tier2.pkl`
+(global), `models/lgb_seg_id1.txt` + `models/xgb_seg_id1.pkl` +
+`models/preprocessor_seg_id1.pkl` (has_identity=1 segment). The
+`has_identity=0` segment model artifacts (`*_seg_id0*`) are kept on disk
+for reference but are not the production choice for that population.
 
 ---
 
@@ -641,22 +717,26 @@ model run time rather than loading raw data in the app. Confirm at build time.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (end of session 6):**
+**Current state (end of session 7):**
 - main: Phase 1 complete and merged (PR #1)
 - `feature/phase2-feature-engineering`: Tier 1 work, 4 commits, PR #2 open
   (not yet merged) — covers Tier 1 within-row features, the stale-metrics
   fix, `has_true_local_hour` + the ablation methodology, and `.gitattributes`
   housekeeping. Scoped independently of everything below; can merge whenever
   ready without waiting on Tier 2/segmentation.
-- `feature/phase2-tier2-and-segmentation`: new branch (branched from
-  `feature/phase2-feature-engineering`'s tip), covers the Tier 2 v1→v2→v3
-  journey, the error analysis, the segment fraud-rate diagnostic, and
-  (not yet built) the segmented model. Not yet pushed or PR'd.
-- **Next action:** implement the segmented model (`has_identity=1` vs.
-  `has_identity=0`, recency-weighted training for the identity segment —
-  see Phase 2 Tier 2 section above for the full rationale). Cost-Sensitive
-  Decision Framework remains on hold until feature/model engineering is
-  judged to have run its course.
+- `feature/phase2-tier2-and-segmentation`: branched from
+  `feature/phase2-feature-engineering`'s tip, covers the Tier 2 v1→v2→v3
+  journey, the error analysis, the segment fraud-rate diagnostic, and the
+  now-complete segmented model investigation (`segmented_pipeline.py` +
+  `segment_id0_tuning.py`) — see Phase 2 Tier 2's "Segmented model" results
+  above. Not yet pushed or PR'd.
+- **Next action:** the hybrid architecture (dedicated model for
+  `has_identity=1`, global model for `has_identity=0`) is decided and its
+  artifacts are saved to `models/`. Remaining before this branch is
+  PR-ready: wire up inference code that routes a transaction to the
+  correct model by its `has_identity` flag (currently the two model paths
+  only exist as separate saved artifacts, not a single callable pipeline).
+  Cost-Sensitive Decision Framework remains on hold until that's done.
 
 ---
 
@@ -669,9 +749,11 @@ When starting a new session:
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status`, `git branch`, and `git log --oneline` on both open
    branches to see current state
-6. **Next action:** build the segmented model (see "Current state" above
-   and the Phase 2 Tier 2 section's "Segmented model" subsection for the
-   recency-weighting rationale).
+6. **Next action:** wire up inference code that routes each transaction to
+   the correct model by its `has_identity` flag (hybrid architecture is
+   decided and its artifacts are saved — see "Current state" above and the
+   Phase 2 Tier 2 section's "Segmented model" results). Then move to the
+   Cost-Sensitive Decision Framework.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
@@ -704,4 +786,7 @@ When starting a new session:
 | Error analysis | Data-driven pass added alongside hypothesis-driven feature engineering | Found the identity-presence blind spot directly, rather than requiring it to be guessed at in advance |
 | Segmented model | Build `has_identity=1`/`has_identity=0` as separate models rather than one global model | Segment fraud rates diverge 3.2x (train fold); error analysis showed identity presence is the dominant driver of catchability |
 | Segmented model recency handling | Downweight/drop early train quarters for the `has_identity=1` segment only | Within-train quarters show a regime shift (Q2→Q3) in this segment specifically that val/test continue; `has_identity=0` showed no such drift and needs no adjustment |
+| Segmented model recency method | Exponential decay (half-life 30 days), not a hard Q1/Q2 cutoff | User decision (session 7): avoids discarding Q1/Q2 signal entirely while still emphasizing the Q3/Q4-like regime val/test continue |
+| Segmented model evaluation | Fair per-segment comparison (global vs. segment model, each scored only on its own segment's rows), not a pooled combined metric | Pooling two independently class-weighted segment models' raw probabilities into one ranking metric compares scores on different scales — confirmed via calibration check: `has_identity=0`'s mean predicted probability was 4.5–5.5x its true rate vs. ~1–1.7x for `has_identity=1` |
+| Segmented model final architecture | Hybrid: dedicated model for `has_identity=1`, global model for `has_identity=0` | Fair comparison shows `has_identity=1` segmentation wins outright on both models/metrics; `has_identity=0` tuning (both more and less model complexity) never beat the global model there |
 | Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |
