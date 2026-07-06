@@ -17,6 +17,11 @@ Methodology must be bulletproof — every decision documented and justified.
   is broken on this machine), then `conda activate ieee-fraud`
 - VS Code interpreter: select `Python (ieee-fraud)` via Ctrl+Shift+P
 - Git remote: https://github.com/nharrison917/IEEE_fraud.git
+- **Known bug (session 5):** `pandas.Series.corr()` crashes the Python
+  process outright in this env (pandas 3.0.3 / numpy 2.4.6) — no exception,
+  no traceback, reproduced on a bare 5-element Series. `DataFrame.corr()`
+  is unaffected (different internal code path). Workaround: build a small
+  DataFrame and call `.corr()` on that instead of two Series directly.
 
 ---
 
@@ -202,52 +207,12 @@ clean before/after story for the write-up and portfolio.
 - Parsed `browser_name` from id_31 (drop version strings)
 - Parsed `os_name` from id_30
 
-**Tier 2 — card-level aggregates (planning, session 5):**
-
-Not yet implemented. Everything shipped so far (Tier 1) is within-row only;
-Tier 2 is the first pass at relational/behavioral features — the actual
-reason this dataset was chosen over the PCA-anonymized prior project.
-
-*Candidate grouping keys (proxy "entities" to aggregate by, since there's no
-true customer ID):*
-- `card1` alone — most granular, simplest starting point (11,735 uniques)
-- `card1 + card2 + card3 + card5 + addr1` — tighter "account-like" proxy
-- `DeviceInfo` / `id_31` — device-based identity, orthogonal to card-based
-- Reconstructed UID via `D1` (`TransactionDT_days - D1` ≈ constant per
-  account) — a documented technique from public IEEE-CIS Kaggle solutions,
-  not an original derivation. Validate that it actually clusters into
-  stable groups before trusting it.
-
-*Candidate feature types per entity (all causal/expanding-window):*
-- Velocity: count of prior transactions for the entity; count in last 1h/24h/7d
-- Recency: time since entity's previous transaction
-- Behavioral baseline: expanding mean/std of `TransactionAmt`; z-score of
-  current amount against it
-- Diversity: count of distinct `addr1`/`P_emaildomain`/`DeviceInfo` seen for
-  the entity so far
-
-*Triage before building all of this:* `C1`, `C13`, `C14` already rank in
-both models' top-15 importance (Vesta's own counting features carry real
-signal). Build one or two candidates first (e.g. card1's 24h transaction
-count, amount z-score) and correlate them against the existing C/D columns
-before investing further — high correlation means redundant, not novel.
-
-*Leakage discipline — different from everything built so far:* Tier 1 and
-the Preprocessor both follow "fit on train, apply to val/test." Tier 2
-aggregates follow a different rule: each row's feature must only use
-transactions strictly earlier in time for that entity, computed via
-expanding/rolling operations on the full timeline sorted by entity+time,
-*before* the train/val/test split — not after. This is legitimate (a
-deployed model has access to a card's full prior history, including what
-falls inside the "train window" here), but a naive `groupby().transform()`
-silently includes future rows. This is the highest leakage-risk part of
-Tier 2 and needs explicit test coverage, not just careful reading.
-
-*Methodology carryover:* use ablation mode (`feature_fraction=1.0`,
-`colsample_bytree=1.0` via `ablation_check.py`) to evaluate Tier 2 features
-individually or in small groups, given how many columns Tier 2 will add at
-once — the production-config comparison will be even noisier here than it
-was for Tier 1's single extra column.
+**Tier 2 — card-level aggregates: see "Phase 2 Tier 2" section below for the
+full results. Summary: the first entity key tried (`card1+card2+card3+card5`
+alone) showed no reliable value; a refined key incorporating a D1-adjusted
+account-start-day fixed a severe entity-collision problem and produced real,
+evidenced value for LightGBM. Implemented in `phase2_feature_engineering/
+tier2_features.py`.**
 
 ---
 
@@ -428,6 +393,119 @@ columns turn out not to already cover it.
 
 ---
 
+## Phase 2 Tier 2 — Card-Level Aggregates (Results)
+
+`phase2_feature_engineering/tier2_features.py`, `tier2_triage.py`,
+`tier2_ablation_check.py`, `uid_validation.py`. Unlike Tier 1, these
+features depend on each entity's transaction history, so they're computed
+on the full dataset (sorted by entity, then time) before the train/val/test
+split — not per-fold like the Preprocessor. Every feature is causal
+(expanding-window, strictly-prior-transactions-only); see `tier2_triage.py`'s
+docstring for why computing this before the split is legitimate rather than
+a leak.
+
+### v1/v2: card1+card2+card3+card5 combo entity — no reliable value
+
+First entity key tried: `card1+card2+card3+card5`, deliberately excluding
+`addr1` (folding it into the key would make an address change look like a
+brand-new entity — history resets to zero — instead of a flagged event on a
+continuous account).
+
+**Triage (correlation against existing C/D columns, train fold):** all
+candidates showed low correlation with the 14 C and 15 D columns (max 0.08–0.27)
+— not redundant — but also weak correlation with `isFraud` itself (|r| < 0.02
+for three of four v1 candidates). One exception: `addr1_changed_from_prev`
+correlated -0.056 with `isFraud`, confirmed non-confounded by a 3-way check
+excluding each entity's first transaction (fraud rate 4.47% when addr1
+unchanged vs. 2.30% when changed, train fold) — the opposite direction from
+the "address change = account takeover" hypothesis going in; a more likely
+(not certain) explanation is that repeat use of a stolen card doesn't require
+re-entering shipping info, so "same address, repeat transactions" looks more
+like sustained fraud than "address changed."
+
+**v1 (4 features: prior count, time-since-last, amount z-score,
+addr1-changed) and v2 (+ `addr1_change_x_inverse_time`, `amt_ratio_vs_prev`
+interaction features) both showed no reliable value** under controlled
+ablation (`feature_fraction=1.0`/`colsample_bytree=1.0`, isolating the
+feature-count/subsampling confound documented in the Tier 1 section):
+
+| Config | LightGBM ROC/PR | XGBoost ROC/PR |
+|---|---|---|
+| Phase 1 (raw) | 0.9037 / 0.5435 | 0.9190 / 0.5697 |
+| Tier 2 v1 (4 feat) alone | 0.9061 / 0.5287 | 0.9139 / 0.5724 |
+| Tier 1 + Tier 2 v1 | 0.9080 / 0.5561 | 0.9182 / 0.5705 |
+| Tier 2 v2 (6 feat) alone | 0.9061 / 0.5363 | 0.9163 / 0.5697 |
+| Tier 1 + Tier 2 v2 | 0.9051 / 0.5326 | 0.9194 / 0.5716 |
+
+No consistent direction across models or combinations, and **none of the six
+features ever cracked either model's top-10 importance** across any
+configuration. Read at the time: this doesn't mean the feature *concepts*
+are uninformative, it means the entity key itself is probably too noisy to
+expose whatever signal exists.
+
+### Diagnosis: the entity key was badly conflated
+
+`uid_validation.py` tested a general community idea about this competition
+(not derived from reading anyone's submitted code, validated independently
+against this project's own data before use): `D1` behaves like "days since
+this account was first seen," so `transaction_day - D1` should be roughly
+constant per real account even when masked card fragments collide across
+different real customers.
+
+Result: **590,540 rows collapse into only 14,845 distinct
+`card1+card2+card3+card5` combos** (~40 transactions per "entity" on
+average — implausibly high for genuine individual accounts over 182 days).
+Of the 10,765 combos with more than one transaction, **84.1% split into
+multiple distinct D1-adjusted start-days**. Cohesion check: raw combo
+groups average **3.9 distinct `addr1` values** (several different
+households); splitting further by start-day drops that to **0.94** —
+essentially one address per sub-group, as expected for a genuine single
+account. `D1` is ~99.8% populated, so this isn't an `id_14`-style coverage
+problem.
+
+### v3: refined entity key (`card1+card2+card3+card5+start_day`)
+
+Same six feature concepts, same causal/expanding-window construction, now
+grouped by the refined key:
+
+| Config | LightGBM ROC/PR | XGBoost ROC/PR |
+|---|---|---|
+| Tier 2 v3 alone | 0.9060 / 0.5462 | 0.9178 / 0.5693 |
+| Tier 1 + Tier 2 v3 | 0.9056 / 0.5289 | **0.9189 / 0.5797** |
+
+First Tier 2 variant to beat the raw baseline for LightGBM alone (0.5462 vs.
+0.5435). XGBoost's combined-stack PR-AUC (0.5797) is the best of the entire
+Phase 2 investigation.
+
+**Extended feature-importance check (`tier2_v3_importance_check.py`) — the
+full picture is more nuanced than "did it crack top-10":**
+
+| Feature | LightGBM rank (of 530) | XGBoost rank (of 530) |
+|---|---|---|
+| `combo_time_since_last` | #37 | #185 |
+| `combo_prior_txn_count` | #38 | #188 |
+| `combo_amt_zscore` | #54 | #252 |
+| `addr1_change_x_inverse_time` | #55 | #226 |
+| `amt_ratio_vs_prev` | #67 | #246 |
+| `addr1_changed_from_prev` | #272 | #250 |
+
+**LightGBM genuinely uses these features** — 5 of 6 land in the top 13% of
+all features, a real (if modest) contribution that "never cracked top-10"
+undersold. `addr1_change_x_inverse_time` (#55) massively outranks the raw
+`addr1_changed_from_prev` flag (#272), validating the choice to build the
+continuous interaction explicitly rather than leave it for the trees to
+reconstruct from the two raw features.
+
+**XGBoost's evidence is weaker despite the better aggregate number** — all
+six features rank bottom-half (#185–252), tiny importance values. The 0.5797
+PR-AUC is real, but there isn't strong feature-importance evidence that
+Tier 2 specifically caused it; could be a genuine thinly-distributed
+contribution, or normal run-to-run variance that happens to coincide with
+this feature set. Documented as an open question rather than claimed as a
+clean win for both models.
+
+---
+
 ## Phase 2 — Cost-Sensitive Decision Framework
 
 Same structure as prior project (`credit_card_fraud/phase2_cost_analysis/`).
@@ -519,4 +597,6 @@ When starting a new session:
 | Tier 1 outputs | Written to phase2_feature_engineering/ + models/*_phase2_* | Avoids overwriting Phase 1 baseline artifacts, keeps before/after comparable |
 | has_true_local_hour flag | Keep | Controlled ablation: +0.018 PR-AUC for LightGBM, exact no-op for XGBoost — real gain, no downside |
 | Feature-count comparisons | Use ablation mode (subsampling=1.0) to validate any single feature, not the production config | Fixed seed + column subsampling reshuffles the whole random draw when column count changes; production-config deltas below ~0.02 PR-AUC aren't trustworthy on their own |
-| Tier 2 grouping key | Not yet decided — candidates scoped, C/D-column correlation triage first | Avoid re-engineering signal Vesta's C columns already provide; validate before building |
+| Tier 2 grouping key | `card1+card2+card3+card5+D1-adjusted start_day` (not the card-fragment combo alone) | Raw combo conflates ~14 real accounts per entity on average (84.1% of multi-txn combos split into >1 D1-adjusted start-day); validated via addr1-diversity cohesion check before trusting it |
+| Tier 2 addr1 handling | Own feature (`addr1_changed_from_prev` + `addr1_change_x_inverse_time`), not folded into the entity key | Folding it into the key would make an address change look like a new entity (history resets) instead of a flagged event on a continuous account |
+| Tier 2 XGBoost result | Documented as an open question, not a confirmed win | Best aggregate PR-AUC of the investigation (0.5797), but all 6 features rank bottom-half in importance — can't rule out the improvement being incidental to this run |
