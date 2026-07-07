@@ -1,0 +1,83 @@
+{
+  "lgb": {
+    "routing": "global model for all rows (no routing)",
+    "id1_rows_as_scored": {
+      "roc_auc": 0.9354840146290234,
+      "pr_auc": 0.7824162354587081
+    },
+    "id0_rows_as_scored": {
+      "roc_auc": 0.8745139726399616,
+      "pr_auc": 0.29782264557112503
+    },
+    "full_val_as_scored": {
+      "roc_auc": 0.9141585951920131,
+      "pr_auc": 0.5875102561365311
+    },
+    "calibration": {
+      "id1_rows": {
+        "mean_pred": 0.09449888943544532,
+        "actual_rate": 0.11020390530499395,
+        "ratio": 0.857491294649819
+      },
+      "id0_rows": {
+        "mean_pred": 0.019290747735943952,
+        "actual_rate": 0.02169334456613311,
+        "ratio": 0.889247283983125
+      }
+    }
+  },
+  "xgb": {
+    "routing": "hybrid routing (seg_id1 for has_identity=1)",
+    "id1_rows_as_scored": {
+      "roc_auc": 0.9485670360286415,
+      "pr_auc": 0.8083737795039152
+    },
+    "id0_rows_as_scored": {
+      "roc_auc": 0.8909997152173232,
+      "pr_auc": 0.3183274148998798
+    },
+    "full_val_as_scored": {
+      "roc_auc": 0.9281864428828294,
+      "pr_auc": 0.6178252975319398
+    },
+    "calibration": {
+      "id1_rows": {
+        "mean_pred": 0.10080077678258349,
+        "actual_rate": 0.11020390530499395,
+        "ratio": 0.914675178739021
+      },
+      "id0_rows": {
+        "mean_pred": 0.01729472081448654,
+        "actual_rate": 0.02169334456613311,
+        "ratio": 0.7972362565745834
+      }
+    }
+  },
+  "ensemble": {
+    "routing": "0.70*xgb + 0.30*lgb (each per its own routing above)",
+    "id1_rows_as_scored": {
+      "roc_auc": 0.9503408897106589,
+      "pr_auc": 0.8127449145022907
+    },
+    "id0_rows_as_scored": {
+      "roc_auc": 0.8970476971793452,
+      "pr_auc": 0.3354659210339631
+    },
+    "full_val_as_scored": {
+      "roc_auc": 0.9319561320022396,
+      "pr_auc": 0.6264634639269838
+    },
+    "calibration": {
+      "id1_rows": {
+        "mean_pred": 0.09891021057844204,
+        "actual_rate": 0.11020390530499395,
+        "ratio": 0.8975200135122604
+      },
+      "id0_rows": {
+        "mean_pred": 0.017893528890923764,
+        "actual_rate": 0.02169334456613311,
+        "ratio": 0.8248395647971459
+      }
+    }
+  }
+}

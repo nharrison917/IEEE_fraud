@@ -1,0 +1,91 @@
+{
+  "recency_halflife_days": 30,
+  "global": {
+    "lgb": {
+      "roc_auc": 0.9055965386676744,
+      "pr_auc": 0.5288964753747092
+    },
+    "xgb": {
+      "roc_auc": 0.918882153855097,
+      "pr_auc": 0.579659846832806
+    }
+  },
+  "segment_id1": {
+    "lgb": {
+      "roc_auc": 0.9313754517804264,
+      "pr_auc": 0.7565137239919202
+    },
+    "xgb": {
+      "roc_auc": 0.9450029611015157,
+      "pr_auc": 0.7936645653644611
+    },
+    "n_train": 97316,
+    "n_train_fraud": 6548,
+    "train_fraud_rate_pct": 6.728595503308808
+  },
+  "segment_id0": {
+    "lgb": {
+      "roc_auc": 0.8488788445661375,
+      "pr_auc": 0.26125133877740425
+    },
+    "xgb": {
+      "roc_auc": 0.8470540172646231,
+      "pr_auc": 0.2358925020171507
+    },
+    "n_train": 257008,
+    "n_train_fraud": 5440,
+    "train_fraud_rate_pct": 2.116665629085476
+  },
+  "segmented_combined": {
+    "lgb": {
+      "roc_auc": 0.8791496761287553,
+      "pr_auc": 0.526801724662525
+    },
+    "xgb": {
+      "roc_auc": 0.9019738195558903,
+      "pr_auc": 0.5621631893869883
+    }
+  },
+  "fair_per_segment_comparison": {
+    "LightGBM_has_identity=1": {
+      "global_on_segment": {
+        "roc_auc": 0.9288492326096592,
+        "pr_auc": 0.7243908559077225
+      },
+      "segment_model": {
+        "roc_auc": 0.9313754517804264,
+        "pr_auc": 0.7565137239919202
+      }
+    },
+    "XGBoost_has_identity=1": {
+      "global_on_segment": {
+        "roc_auc": 0.940016954130875,
+        "pr_auc": 0.7852006381347805
+      },
+      "segment_model": {
+        "roc_auc": 0.9450029611015157,
+        "pr_auc": 0.7936645653644611
+      }
+    },
+    "LightGBM_has_identity=0": {
+      "global_on_segment": {
+        "roc_auc": 0.8608655616750447,
+        "pr_auc": 0.22103781130760092
+      },
+      "segment_model": {
+        "roc_auc": 0.8488788445661375,
+        "pr_auc": 0.26125133877740425
+      }
+    },
+    "XGBoost_has_identity=0": {
+      "global_on_segment": {
+        "roc_auc": 0.8815053194268813,
+        "pr_auc": 0.24512251288483183
+      },
+      "segment_model": {
+        "roc_auc": 0.8470540172646231,
+        "pr_auc": 0.2358925020171507
+      }
+    }
+  }
+}

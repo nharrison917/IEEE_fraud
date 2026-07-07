@@ -1,0 +1,145 @@
+{
+  "spearman_corr_full_val": 0.7543816473294173,
+  "n_fraud": 4611,
+  "both_catch": 3111,
+  "neither_catch": 90,
+  "lgb_only": 1,
+  "xgb_only": 19,
+  "top_divergent_fraud": [
+    {
+      "index": 403457,
+      "TransactionAmt": 74.679,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.11633420259423578,
+      "xgb_rank_pct": 0.8758424492837065,
+      "rank_diff": -0.7595082466894707
+    },
+    {
+      "index": 356477,
+      "TransactionAmt": 40.3,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.24504690622142447,
+      "xgb_rank_pct": 0.9561333694584617,
+      "rank_diff": -0.7110864632370373
+    },
+    {
+      "index": 403972,
+      "TransactionAmt": 36.614,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.18781962271819014,
+      "xgb_rank_pct": 0.8877806753141193,
+      "rank_diff": -0.6999610525959292
+    },
+    {
+      "index": 368415,
+      "TransactionAmt": 200.0,
+      "ProductCD": "R",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.854048836657974,
+      "xgb_rank_pct": 0.15447725810275342,
+      "rank_diff": 0.6995715785552206
+    },
+    {
+      "index": 410579,
+      "TransactionAmt": 200.0,
+      "ProductCD": "R",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.16751617163951638,
+      "xgb_rank_pct": 0.8385630101263251,
+      "rank_diff": -0.6710468384868087
+    },
+    {
+      "index": 446845,
+      "TransactionAmt": 37.626,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.26434280489043926,
+      "xgb_rank_pct": 0.9350848376062587,
+      "rank_diff": -0.6707420327158194
+    },
+    {
+      "index": 385705,
+      "TransactionAmt": 27.068,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.27893961459003624,
+      "xgb_rank_pct": 0.9450418261252413,
+      "rank_diff": -0.6661022115352051
+    },
+    {
+      "index": 419005,
+      "TransactionAmt": 355.97,
+      "ProductCD": "W",
+      "has_identity": 0,
+      "lgb_rank_pct": 0.22221187387814542,
+      "xgb_rank_pct": 0.8838182002912588,
+      "rank_diff": -0.6616063264131133
+    },
+    {
+      "index": 392163,
+      "TransactionAmt": 25.135,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.18594845395739493,
+      "xgb_rank_pct": 0.8451502015104819,
+      "rank_diff": -0.659201747553087
+    },
+    {
+      "index": 388646,
+      "TransactionAmt": 52.203,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.2703542520405053,
+      "xgb_rank_pct": 0.9199800182883463,
+      "rank_diff": -0.6496257662478411
+    },
+    {
+      "index": 452828,
+      "TransactionAmt": 77.0,
+      "ProductCD": "W",
+      "has_identity": 0,
+      "lgb_rank_pct": 0.26413960104311307,
+      "xgb_rank_pct": 0.911208385545433,
+      "rank_diff": -0.64706878450232
+    },
+    {
+      "index": 445451,
+      "TransactionAmt": 59.0,
+      "ProductCD": "W",
+      "has_identity": 0,
+      "lgb_rank_pct": 0.3120110407423714,
+      "xgb_rank_pct": 0.9483777559521793,
+      "rank_diff": -0.6363667152098079
+    },
+    {
+      "index": 446283,
+      "TransactionAmt": 49.0,
+      "ProductCD": "W",
+      "has_identity": 0,
+      "lgb_rank_pct": 0.30736275273478514,
+      "xgb_rank_pct": 0.9331628678836319,
+      "rank_diff": -0.6258001151488468
+    },
+    {
+      "index": 466423,
+      "TransactionAmt": 35.351,
+      "ProductCD": "C",
+      "has_identity": 1,
+      "lgb_rank_pct": 0.24737528363870356,
+      "xgb_rank_pct": 0.872548853591628,
+      "rank_diff": -0.6251735699529245
+    },
+    {
+      "index": 462279,
+      "TransactionAmt": 59.0,
+      "ProductCD": "W",
+      "has_identity": 0,
+      "lgb_rank_pct": 0.2706590578114946,
+      "xgb_rank_pct": 0.8936397195786907,
+      "rank_diff": -0.6229806617671961
+    }
+  ]
+}
