@@ -1,19 +1,18 @@
 {
-  "imbalance_handling": "SMOTE 1:10 (SMOTENC), no class-weighting, no recency-weighting",
   "global": {
     "lgb": {
-      "roc_auc": 0.9177922222377827,
-      "pr_auc": 0.5852323601660238
+      "roc_auc": 0.9164034073057118,
+      "pr_auc": 0.5974086669362141
     },
     "xgb": {
-      "roc_auc": 0.9196833734693137,
-      "pr_auc": 0.6071826871320818
+      "roc_auc": 0.924690105614578,
+      "pr_auc": 0.6143973511867664
     }
   },
   "segment_id1": {
     "lgb": {
-      "roc_auc": 0.9409970095510631,
-      "pr_auc": 0.7704989160562501
+      "roc_auc": 0.9422516022940244,
+      "pr_auc": 0.7789292043278324
     },
     "xgb": {
       "roc_auc": 0.949120764010439,

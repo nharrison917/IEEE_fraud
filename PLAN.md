@@ -741,6 +741,43 @@ row they were interpolated from), which adds real complexity for an
 unconfirmed extra gain. Deferred until/unless there's a specific reason to
 revisit it.
 
+### Hyperparameter tuning (session 7 continued)
+
+`hyperparameter_tuning.py` ran a modest randomized search (6 draws per
+model/algorithm, not an exhaustive grid — deliberately kept small; this is
+"tune if time allows" per the project's stated priority, not the main
+event) on top of the now-fixed SMOTE 1:10 resampling, for both production
+models. Feature/row subsampling (`feature_fraction`, `bagging_fraction`,
+`subsample`, `colsample_bytree`) were back in the search space here —
+unlike the ablation-mode scripts elsewhere in this phase, this search
+tunes hyperparameters on one fixed, already-decided feature set and
+resampling scheme, so subsampling is a legitimate regularization knob here,
+not the feature-comparison confound it would be in an A/B test.
+
+| Model | Algorithm | SMOTE-1:10 default | Best of 6 trials | ROC-AUC Δ | PR-AUC Δ |
+|---|---|---|---|---|---|
+| Global | LightGBM | 0.9178 / 0.5852 | 0.9164 / 0.5974 | −0.0014 | +0.0122 |
+| Global | XGBoost | 0.9197 / 0.6072 | 0.9247 / 0.6144 | +0.0050 | +0.0072 |
+| has_identity=1 | LightGBM | 0.9410 / 0.7705 | 0.9423 / 0.7789 | +0.0013 | +0.0084 |
+| has_identity=1 | XGBoost | 0.9491 / 0.8072 | 0.9486 / 0.8114 | −0.0005 | +0.0042 |
+
+All four trials found a PR-AUC improvement (the project's primary metric).
+Caveat worth stating plainly: picking the best of 6 trials by val PR-AUC
+carries a mild "winner's curse" — the reported number is somewhat
+optimistic relative to true generalization, proportionally more so for a
+thin margin than a wide one.
+
+**Decision: adopted 3 of 4** (`finalize_tuned_models.py`) — Global
+LightGBM (leaves=63, min_child_samples=20, lr=0.1, L2=1,
+feature_fraction=0.6, bagging_fraction=1.0), Global XGBoost (depth=8,
+lr=0.05, min_child_weight=1, L1=1, L2=1, subsample=0.6, colsample=1.0),
+and has_identity=1 LightGBM (leaves=127, min_child_samples=20, lr=0.05,
+feature_fraction=0.8, bagging_fraction=0.8). **has_identity=1 XGBoost kept
+at its SMOTE-1:10 default** — its best trial's margin (ROC −0.0005 / PR
++0.0042) was judged too thin, relative to the 6-trial selection bias, to
+be worth adopting. These are the current production hyperparameters;
+numbers reconfirmed in `models/production_metrics.json`.
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
@@ -884,4 +921,5 @@ When starting a new session:
 | Segmented model final architecture | Hybrid: dedicated model for `has_identity=1`, global model for `has_identity=0` | Fair comparison shows `has_identity=1` segmentation wins outright on both models/metrics; `has_identity=0` tuning (both more and less model complexity) never beat the global model there |
 | Imbalance handling (production) | SMOTE 1:10 (via `SMOTENC`), replacing `is_unbalance`/`scale_pos_weight` class-weighting and recency-weighting for both production models | Ablation (session 7 continued) showed SMOTE 1:10 beats class-weighting alone on PR-AUC by a wide margin (LightGBM +0.056, XGBoost +0.027) and beats the has_identity=1 segment's recency-weighted config outright on every metric; more aggressive ratios (1:5, 1:3) underperform 1:10 |
 | SMOTE implementation | `SMOTENC`, not plain `SMOTE` | Plain SMOTE linearly interpolates every column, corrupting one-hot dummies, native categorical columns, and binary engineered flags into meaningless fractional values; `SMOTENC` majority-votes those columns instead of interpolating them |
+| Hyperparameter tuning scope | Modest randomized search (6 trials/model/algorithm), not an exhaustive grid | Tuning is "if time allows" per project priority, not the main event; adopted 3 of 4 winning configs (Global LightGBM/XGBoost, has_identity=1 LightGBM), kept has_identity=1 XGBoost at its SMOTE-1:10 default since its best trial's margin was too thin relative to the 6-trial selection bias to trust |
 | Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |
