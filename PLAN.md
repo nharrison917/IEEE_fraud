@@ -1187,46 +1187,39 @@ against.
 - Commit by concern, not by session
 
 **Current state (end of session 9):**
-- main: Phase 1, Phase 2 Tier 1, **and** Phase 2 Tier 2/segmentation/
-  ensemble all merged. PR #2 (`feature/phase2-feature-engineering`)
-  merged 2026-07-06; **PR #3 (`feature/phase2-tier2-and-segmentation`)
-  merged 2026-07-07** (merge commit, not squash — `gh pr merge 3 --merge`,
-  matching PR #2's method). `models/production_metrics.json` and
-  `models/hybrid_val_metrics.json` hold the final post-fix, post-ensemble
-  numbers — see "Model divergence analysis" and "Ensemble" sections above.
-- **`feature/phase2-cost-sensitivity`**: rebased onto the updated main
-  right after PR #3 merged (clean, since the branch was still local-only
-  and unpushed at that point — no force-push needed). 3 commits ahead of
-  main, **still local-only, not yet pushed**:
-  1. PLAN.md sync (carried over from session 8, was never actually part
-     of PR #3 — it was cost-sensitivity's own first commit even before
-     this session started).
-  2. Cost-Sensitive Decision Framework: payment-processor cost lens (see
-     "Cost function parameter values" section above),
-     `phase2_cost_analysis/cost_threshold_analysis.py`, val threshold
-     sweep + sensitivity analysis + one-time test confirmation across all
-     three `HybridModel` algorithm choices. Ensemble wins on val
-     (cost-optimal threshold 0.03); the aggressive resulting flag rate
-     (~15.6%) documented as a named limitation rather than masked with an
-     unjustified capacity constraint (user decision).
-  3. `app.py` (Streamlit dashboard reading `models/cost_dashboard_data.json`)
-     — model selector, live threshold/cost-parameter sliders (linear
-     decomposition trick, generalized to two parameters across all three
-     algorithms), sensitivity charts, operational reality panel. Verified
-     end-to-end with a Playwright driver (no `chromium-cli` available in
-     this environment) rather than just launched — captured as a project
-     skill at `.claude/skills/run-ieee-fraud/` (unignored from the user's
-     global `.claude/`-blocking gitignore via explicit negation rules in
-     this project's `.gitignore`).
-- **Phase 2's Cost-Sensitive Decision Framework is now complete** —
-  cost function decided, threshold optimization + sensitivity analysis
-  run, test set confirmed once, dashboard built and verified.
-- **Next action:** not yet decided. Candidates: push this branch and open
-  its own PR against main; write up Phase 2 findings for the portfolio
-  README; deploy the dashboard to Streamlit Community Cloud (original
-  PLAN.md target, "Note: data size may require pre-computing dashboard
-  data at model run time" — already satisfied, since `app.py` reads the
-  pre-computed `cost_dashboard_data.json` rather than loading raw data).
+- **main is fully up to date — everything through the cost-sensitive
+  framework, dashboard, and README is merged.** PR history: #2
+  (`feature/phase2-feature-engineering`, Tier 1) merged 2026-07-06; #3
+  (`feature/phase2-tier2-and-segmentation`, Tier 2/segmentation/ensemble)
+  merged 2026-07-07; #4 (`feature/phase2-cost-sensitivity`, cost function
+  + threshold optimization + dashboard) merged 2026-07-07; #5
+  (`docs/readme-and-wrapup`, README + screenshots + dependency cleanup)
+  merged 2026-07-07. All via `gh pr merge --merge` (merge commit, not
+  squash — consistent method throughout). `models/production_metrics.json`,
+  `models/hybrid_val_metrics.json`, and `models/cost_dashboard_data.json`
+  hold the final numbers — see "Model divergence analysis", "Ensemble",
+  and "Cost function parameter values" sections above.
+- **Portfolio deliverable is in a stable, resumable state**: `README.md`
+  (repo root) is the external-facing narrative with dashboard screenshots
+  (`assets/`); this file (`PLAN.md`) remains the internal methodology/
+  decisions log. `app.py` + `.claude/skills/run-ieee-fraud/` (verified
+  Playwright-based smoke test) let the dashboard be relaunched and
+  re-checked in one command. `environment.yml` was cleaned of unused
+  deps (`category_encoders`, `jupyter`, `ipykernel` — never actually
+  used anywhere in the codebase).
+- Local branches `feature/phase2-cost-sensitivity` and
+  `docs/readme-and-wrapup` are fully merged and safe to delete (local +
+  remote) whenever convenient — not yet done as of end of session 9,
+  left for the user to confirm.
+- **Next action:** not yet decided — user is pausing here deliberately
+  ("wrapping up... to a state where I can come back and make smaller
+  modifications"). Candidates for a future session: deploy the dashboard
+  to Streamlit Community Cloud (original PLAN.md target — already
+  satisfied precondition: "data size may require pre-computing dashboard
+  data" is done, since `app.py` reads the pre-computed
+  `cost_dashboard_data.json` rather than raw data); the amount-weighted
+  training idea flagged earlier and never pursued; revisiting the
+  `has_identity=0` segment; anything else the user brings back.
 
 ---
 
@@ -1237,19 +1230,20 @@ When starting a new session:
 2. Open VS Code in `C:\Projects\IEEE_fraud`
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
-5. Check `git status`, `git branch`, and `git log --oneline` — work
-   continues on `feature/phase2-cost-sensitivity`, now rebased onto main
-   (PR #3 merged 2026-07-07, so main includes Tier 2/segmentation/ensemble
-   too). 3 commits ahead of main, **still local-only, not yet pushed** —
-   confirm with the user before pushing / opening a PR.
-6. **Phase 2's Cost-Sensitive Decision Framework is done**: cost function
-   decided (session 9 — payment-processor lens, see "Cost function
-   parameter values" section), threshold-sweep + sensitivity + one-time
-   test confirmation done (`phase2_cost_analysis/cost_threshold_analysis.py`),
-   Streamlit dashboard built and verified (`app.py`, plus the
-   `.claude/skills/run-ieee-fraud/` project skill for re-verifying it).
-   **Next action not yet decided** — see "Current state" above for
-   candidates (push + PR, README write-up, Streamlit Cloud deploy).
+5. Check `git status`, `git branch`, and `git log --oneline` — **main is
+   fully up to date as of end of session 9** (PRs #2–#5 all merged; see
+   "Current state" above). Start new work from a fresh branch off main,
+   not off one of the old feature branches. `feature/phase2-cost-sensitivity`
+   and `docs/readme-and-wrapup` are merged and safe to delete whenever
+   convenient (not yet done).
+6. **The whole project is in a stable, resumable state**: Phase 1
+   baseline, Phase 2 Tier 1/Tier 2/segmentation/ensemble, the
+   payment-processor Cost-Sensitive Decision Framework, the Streamlit
+   dashboard (`app.py`, verified via `.claude/skills/run-ieee-fraud/`),
+   and a portfolio-facing `README.md` with dashboard screenshots are all
+   done and merged. **Next action not yet decided** — user paused here
+   deliberately; see "Current state" above for candidates (Streamlit
+   Cloud deploy, amount-weighted training, `has_identity=0` revisit).
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
