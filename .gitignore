@@ -21,3 +21,15 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Global gitignore blocks .claude/ everywhere -- unignore just the
+# run-ieee-fraud skill (SKILL.md + driver.py) so it's part of the repo.
+# Screenshots stay ignored: regenerated each run, no reason to version PNGs.
+!.claude/
+!.claude/skills/
+!.claude/skills/run-ieee-fraud/
+!.claude/skills/run-ieee-fraud/SKILL.md
+!.claude/skills/run-ieee-fraud/driver.py
+.claude/skills/run-ieee-fraud/screenshots/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

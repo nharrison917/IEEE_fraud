@@ -1022,6 +1022,132 @@ Target: deployed to Streamlit Community Cloud.
 Note: data size (~590k rows) may require pre-computing dashboard data at
 model run time rather than loading raw data in the app. Confirm at build time.
 
+### Cost function parameter values (session 9) — payment-processor lens
+
+**Job-application context clarified this session:** the target role is
+specifically a **payment processor** (merchant/issuer middleman) — not a
+bank/issuer, not a merchant. The source data (Vesta) is itself this kind of
+company. This reframes the FP/FN cost meaning relative to the prior project
+(`credit_card_fraud`), which used a generic issuer-investigation lens.
+
+**Distribution check before reusing prior values (`amt_stats.py`,
+scratchpad):** train-fold `TransactionAmt` (mean $134, median $70, 95th pct
+$441, 99th pct $1,092, max $31,937) is broadly comparable in scale to the
+prior project's `Amount` (mean $88, median $22, 95th pct $365, 99th pct
+$1,018, max $25,691) — tails converge, though this dataset's median runs 3x
+higher. Crossover math (friction term overtakes base cost) isn't materially
+different in shape either way, so nothing about the scale forces new values
+on distribution grounds alone. Also notable: this dataset's fraud amounts
+track legit amounts almost exactly (mean/median ratio ~1.04–1.11), unlike
+the prior project's card-testing signature (fraud median half of legit) —
+consistent with `error_analysis.py`'s earlier finding that fraud here gets
+*harder* to catch at higher amounts, not concentrated in small probes.
+
+**Decided values (`phase2_cost_analysis/cost_threshold_analysis.py`):**
+
+```
+FP cost = $3 + (3% x Amount)
+FN cost = Amount
+```
+
+- **FN = Amount** is on firmer ground here than the prior project's "worst
+  case, no recovery modeled" hedge: fraud-decisioning vendors in this market
+  commonly sell a chargeback-guarantee product — if the vendor approves a
+  transaction that turns out fraudulent, the vendor eats the loss, not the
+  merchant. This is general industry knowledge about this vendor category,
+  **not verified from this project's own data** — stated that way in every
+  output, consistent with the project's "don't claim what we don't know"
+  discipline (V-column content, etc.).
+- **FP = $3 base + 3% friction** reframes the prior project's "$10
+  investigation cost" (an issuer's analyst reviewing a flagged transaction
+  after the fact) into a processor's own P&L: $3 covers automated
+  dispute/support handling for a declined checkout; 3% approximates
+  forfeited processing-fee revenue plus a modest allowance for
+  merchant-retention risk (processors are chosen/dropped by their
+  false-decline rate). Crossover (friction term overtakes base) lands at
+  Amount=$100 here vs. $1,000 under the prior issuer framing — intentional,
+  since a processor's own revenue is itself fee/percentage-based.
+
+### Threshold optimization results (session 9)
+
+Ran on the production `HybridModel` (`inference.py`), all three algorithm
+choices (`lgb`, `xgb`, `ensemble`), 0.01–0.99 threshold sweep on val,
+confirmed once on test.
+
+| Algorithm | Val cost-optimal threshold | Val total cost | Test total cost (same threshold) |
+|---|---|---|---|
+| LightGBM | 0.03 | $280,537 | $305,142 |
+| XGBoost | 0.03 | $260,113 | $279,752 |
+| **Ensemble** | **0.03** | **$255,922** | $280,056 |
+
+Ensemble wins on validation (as it does on PR-AUC); XGBoost edges it out by
+a thin margin on test ($279,752 vs $280,056, ~0.1%) — normal noise at this
+margin, not acted on, per the "choose on val, confirm on test" rule
+(reported the val-chosen ensemble as production rather than re-picking
+based on test).
+
+**Notable finding: the cost-optimal threshold (0.03) is far more aggressive
+than a typical real-world fraud tool** — it flags ~15.6% of all validation
+transactions (FP=14,706, TP=3,672 of 118,108 rows), vs. e.g. the prior
+project's 0.30 or industry-typical 1–5% review/decline rates. This is a
+correct, not a buggy, consequence of the chosen cost ratio: average FN cost
+(~$134, full Amount) vs. average FP cost (~$3 + 3%×$134 ≈ $7) is roughly
+19:1 in favor of recall, so aggressive flagging genuinely minimizes total
+dollar cost under this cost function.
+
+**User decision (session 9): document as-is rather than add a capacity
+constraint.** The linear, per-transaction cost function has no term for the
+*aggregate* false-decline rate — each individual decline is priced
+correctly, but a processor declining 1 in 6 legitimate checkouts would in
+practice trigger merchant churn through a threshold/nonlinear effect this
+model can't see (it only prices friction transaction-by-transaction, not
+the reputational cost of a systematically high decline rate). Named
+explicitly as a limitation in `cost_report.html` / `results_summary.md`
+rather than hidden behind an unjustified capacity constraint (e.g. "cap
+flag rate at 5%") that would need its own separate justification (review
+team capacity? an industry benchmark?) not yet available. Flagged as a
+candidate refinement if that justification later emerges.
+
+**Sensitivity analysis (validation, ensemble):**
+
+| FP base cost (friction fixed 3%) | Opt. threshold | Total cost |
+|---|---|---|
+| $1 | 0.02 | $215,445 |
+| $3 | 0.03 | $255,922 |
+| $5 | 0.04 | $278,336 |
+| $10 | 0.06 | $314,678 |
+
+| Friction rate (base fixed $3) | Opt. threshold | Total cost |
+|---|---|---|
+| 1% | 0.02 | $188,053 |
+| 3% | 0.03 | $255,922 |
+| 5% | 0.05 | $291,105 |
+| 10% | 0.07 | $349,713 |
+
+Threshold stays low (0.02–0.07) across a 10x range of both parameters —
+the recall-favoring conclusion is not a fragile artifact of the exact $3/3%
+choice, though the *degree* of aggressiveness (flag rate) scales with the
+assumption.
+
+**Operational interpretation (test set, ensemble, threshold 0.03, scaled to
+1,000,000 transactions):** flags ~156,611 as fraud, of which ~26,061 are
+genuine fraud caught and ~130,550 are false alarms. Estimated false-decline
+cost ~$1,076,150 vs. ~$1,295,034 fraud prevented, net saving ~$2,793,024 vs.
+no detection.
+
+**Outputs:** `phase2_cost_analysis/cost_threshold_analysis.py` (full
+reproducible pipeline), `cost_results.html` (interactive Plotly: cost
+curves by algorithm, both sensitivity axes, cost breakdown at test,
+errors-by-amount scatter), `cost_report.html` (stakeholder report),
+`results_summary.md` (written summary), `models/cost_dashboard_data.json`
+(feeds the planned Streamlit dashboard below — full val sweep + sensitivity
++ test results, all pre-computed so the dashboard doesn't need to reload
+raw data or models).
+
+**Next action:** build the Streamlit dashboard (model selector, threshold
+slider, operational reality panel, sensitivity chart) reading from
+`models/cost_dashboard_data.json`.
+
 ### Flagged for later: amount-weighted training (not yet pursued)
 
 Raised (session 7): rather than only tuning a decision *threshold* against
@@ -1060,39 +1186,47 @@ against.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (start of session 8):**
-- main: Phase 1 **and** Phase 2 Tier 1 merged. PR #2
-  (`feature/phase2-feature-engineering`) merged 2026-07-06 — the "PR #2 open"
-  note from session 7 was stale; corrected here after confirming via
-  `gh pr list --state all`.
-- `feature/phase2-tier2-and-segmentation`: branched from Tier 1's pre-merge
-  tip, so it already contains everything PR #2 merged plus its own 7 commits
-  (Tier 2 v1→v2→v3, error analysis, segmentation, SMOTE ablation,
-  hyperparameter tuning, inference wiring below). Pushed to origin, no PR
-  opened yet. `models/production_metrics.json` holds the per-model-alone
-  numbers from session 7; `models/hybrid_val_metrics.json` (new, session 8)
-  holds the actual production routing numbers — see "Inference pipeline"
-  above for why they differ for LightGBM.
-- **Session 8:** wired up `phase2_feature_engineering/inference.py` — the
-  callable routing pipeline that was the last thing blocking this branch
-  from being PR-ready. Revised the hybrid architecture decision in the
-  process (algorithm-specific routing, not one fixed rule — see "Inference
-  pipeline" section above).
-- **Session 8 continued:** a step-back question about the two algorithms'
-  relative strengths led to `model_divergence_analysis.py`, which traced a
-  real bug (`combo_amt_zscore` producing `NaN` instead of a meaningful
-  value for zero-variance entity histories — see "Model divergence
-  analysis" section), fixed it, retrained both production model pairs, and
-  then confirmed via `ensemble_test.py` that a weighted LightGBM/XGBoost
-  blend (`w=0.70` toward XGBoost) beats either standalone algorithm on val
-  PR-AUC. The ensemble is now `inference.py`'s production default —
-  see "Ensemble" section above.
-- **Next action:** Cost-Sensitive Decision Framework — define the cost
-  function's parameter values, then threshold-sweep on val and confirm once
-  on test (first test-set touch of the whole project). Use the ensemble
-  (`algorithm="ensemble"`, `inference.py`'s default) as the model under
-  threshold evaluation unless there's a specific reason to evaluate the
-  single algorithms separately.
+**Current state (end of session 9):**
+- main: Phase 1, Phase 2 Tier 1, **and** Phase 2 Tier 2/segmentation/
+  ensemble all merged. PR #2 (`feature/phase2-feature-engineering`)
+  merged 2026-07-06; **PR #3 (`feature/phase2-tier2-and-segmentation`)
+  merged 2026-07-07** (merge commit, not squash — `gh pr merge 3 --merge`,
+  matching PR #2's method). `models/production_metrics.json` and
+  `models/hybrid_val_metrics.json` hold the final post-fix, post-ensemble
+  numbers — see "Model divergence analysis" and "Ensemble" sections above.
+- **`feature/phase2-cost-sensitivity`**: rebased onto the updated main
+  right after PR #3 merged (clean, since the branch was still local-only
+  and unpushed at that point — no force-push needed). 3 commits ahead of
+  main, **still local-only, not yet pushed**:
+  1. PLAN.md sync (carried over from session 8, was never actually part
+     of PR #3 — it was cost-sensitivity's own first commit even before
+     this session started).
+  2. Cost-Sensitive Decision Framework: payment-processor cost lens (see
+     "Cost function parameter values" section above),
+     `phase2_cost_analysis/cost_threshold_analysis.py`, val threshold
+     sweep + sensitivity analysis + one-time test confirmation across all
+     three `HybridModel` algorithm choices. Ensemble wins on val
+     (cost-optimal threshold 0.03); the aggressive resulting flag rate
+     (~15.6%) documented as a named limitation rather than masked with an
+     unjustified capacity constraint (user decision).
+  3. `app.py` (Streamlit dashboard reading `models/cost_dashboard_data.json`)
+     — model selector, live threshold/cost-parameter sliders (linear
+     decomposition trick, generalized to two parameters across all three
+     algorithms), sensitivity charts, operational reality panel. Verified
+     end-to-end with a Playwright driver (no `chromium-cli` available in
+     this environment) rather than just launched — captured as a project
+     skill at `.claude/skills/run-ieee-fraud/` (unignored from the user's
+     global `.claude/`-blocking gitignore via explicit negation rules in
+     this project's `.gitignore`).
+- **Phase 2's Cost-Sensitive Decision Framework is now complete** —
+  cost function decided, threshold optimization + sensitivity analysis
+  run, test set confirmed once, dashboard built and verified.
+- **Next action:** not yet decided. Candidates: push this branch and open
+  its own PR against main; write up Phase 2 findings for the portfolio
+  README; deploy the dashboard to Streamlit Community Cloud (original
+  PLAN.md target, "Note: data size may require pre-computing dashboard
+  data at model run time" — already satisfied, since `app.py` reads the
+  pre-computed `cost_dashboard_data.json` rather than loading raw data).
 
 ---
 
@@ -1103,15 +1237,19 @@ When starting a new session:
 2. Open VS Code in `C:\Projects\IEEE_fraud`
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
-5. Check `git status`, `git branch`, and `git log --oneline` on both open
-   branches to see current state
-6. **Next action:** Cost-Sensitive Decision Framework — inference is wired
-   up (`phase2_feature_engineering/inference.py`, session 8), production
-   default is the LightGBM/XGBoost **ensemble** (`algorithm="ensemble"`,
-   weight 0.70 toward XGBoost — see "Ensemble" section and Key Decisions
-   Log), with the two single algorithms available for the dashboard's
-   model selector. Start by defining the cost function's parameter values,
-   then threshold-sweep on val, then confirm once on test.
+5. Check `git status`, `git branch`, and `git log --oneline` — work
+   continues on `feature/phase2-cost-sensitivity`, now rebased onto main
+   (PR #3 merged 2026-07-07, so main includes Tier 2/segmentation/ensemble
+   too). 3 commits ahead of main, **still local-only, not yet pushed** —
+   confirm with the user before pushing / opening a PR.
+6. **Phase 2's Cost-Sensitive Decision Framework is done**: cost function
+   decided (session 9 — payment-processor lens, see "Cost function
+   parameter values" section), threshold-sweep + sensitivity + one-time
+   test confirmation done (`phase2_cost_analysis/cost_threshold_analysis.py`),
+   Streamlit dashboard built and verified (`app.py`, plus the
+   `.claude/skills/run-ieee-fraud/` project skill for re-verifying it).
+   **Next action not yet decided** — see "Current state" above for
+   candidates (push + PR, README write-up, Streamlit Cloud deploy).
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
@@ -1154,3 +1292,6 @@ When starting a new session:
 | Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |
 | `combo_amt_zscore` zero-variance fix (session 8) | Floor prior std at 1% of prior mean (min 1 cent) instead of dividing by a raw 0 and getting `NaN` | A step-back question about the two algorithms' relative strengths led to `model_divergence_analysis.py`, which found LightGBM and XGBoost scoring identical-repeat-amount legitimate transactions (recurring-payment pattern) 0.01-0.07 vs. 0.85-0.92 percentile risk — traced to this feature's `NaN` output for any entity with zero historical variance, handled very differently by each algorithm's native missing-value routing |
 | Production model ensemble (session 8) | Weighted blend `0.70 * xgb_prob + 0.30 * lgb_prob` (each already per its own routing) is now `inference.py`'s default (`algorithm="ensemble"`) | `ensemble_test.py`'s 21-point grid search (w=0.0-1.0, step 0.05) found this beats standalone XGBoost by +0.0086 PR-AUC, holds in both `has_identity` segments separately, and sits in a broad plateau (w=0.55-0.85 all within 0.004) rather than a fragile single-point spike. Motivated by `model_divergence_analysis.py` showing the two algorithms agree on only 67-68% of fraud cases (Spearman ρ=0.745) |
+| Cost function lens (session 9) | Payment-processor P&L, not issuer-investigation or merchant-lost-margin | Job-application target is specifically a payment processor (merchant/issuer middleman); the source data (Vesta) is itself this kind of company. Changes both FP meaning (processor's forfeited fee revenue + retention risk, not analyst time or merchant margin) and strengthens FN=Amount's justification (chargeback-guarantee liability model common for this vendor category, vs. prior project's "worst case, no recovery" hedge) |
+| Cost function parameter values (session 9) | FP = $3 + 3%×Amount; FN = Amount | Amount-distribution check (`amt_stats.py`) showed this dataset's scale is broadly comparable to the prior project's, so no distribution-driven reason to change magnitudes; values instead chosen to fit the processor-P&L reframing (see lens decision above) rather than reused blindly from the prior project's $10+1% issuer framing |
+| Aggressive cost-optimal threshold (session 9) | Documented as a named limitation, not masked by an ad hoc capacity constraint | The cost-minimizing threshold (0.03) flags ~15.6% of validation transactions — mathematically correct given the ~19:1 FN:FP cost ratio, but far more aggressive than real-world decline rates. A capacity constraint (e.g. cap flag rate at 5%) would need its own justification (review-team capacity? industry benchmark?) not yet available, so the linear cost function's blind spot (no term for the *aggregate* false-decline rate, only its sum) is named explicitly in the write-up instead. Revisit if a defensible capacity justification emerges |
