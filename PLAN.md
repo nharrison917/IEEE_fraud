@@ -855,18 +855,21 @@ against.
   housekeeping. Scoped independently of everything below; can merge whenever
   ready without waiting on Tier 2/segmentation.
 - `feature/phase2-tier2-and-segmentation`: branched from
-  `feature/phase2-feature-engineering`'s tip, covers the Tier 2 v1→v2→v3
-  journey, the error analysis, the segment fraud-rate diagnostic, and the
-  now-complete segmented model investigation (`segmented_pipeline.py` +
-  `segment_id0_tuning.py`) — see Phase 2 Tier 2's "Segmented model" results
-  above. Not yet pushed or PR'd.
-- **Next action:** the hybrid architecture (dedicated model for
-  `has_identity=1`, global model for `has_identity=0`) is decided and its
-  artifacts are saved to `models/`. Remaining before this branch is
-  PR-ready: wire up inference code that routes a transaction to the
-  correct model by its `has_identity` flag (currently the two model paths
-  only exist as separate saved artifacts, not a single callable pipeline).
-  Cost-Sensitive Decision Framework remains on hold until that's done.
+  `feature/phase2-feature-engineering`'s tip, 6 commits, **pushed to origin,
+  no PR opened yet**. Covers the Tier 2 v1→v2→v3 journey, the error
+  analysis, the segment fraud-rate diagnostic, the segmented model
+  investigation, the SMOTE ablation (which also reversed the recency-
+  weighting decision — see "SMOTE ablation and production config revision"),
+  and hyperparameter tuning. `models/production_metrics.json` holds the
+  current authoritative production numbers (SMOTE 1:10 + tuned
+  hyperparameters for Global and `has_identity=1` LightGBM/XGBoost, tuned
+  hyperparameters for `has_identity=1` LightGBM only).
+- **Next action:** wire up inference code that routes a transaction to the
+  correct model by its `has_identity` flag (currently the model paths only
+  exist as separate saved artifacts under `models/`, not a single callable
+  pipeline). That's the last thing standing between this branch and being
+  PR-ready. Cost-Sensitive Decision Framework (including the flagged
+  amount-weighted-training idea) remains on hold until that's done.
 
 ---
 
@@ -881,9 +884,11 @@ When starting a new session:
    branches to see current state
 6. **Next action:** wire up inference code that routes each transaction to
    the correct model by its `has_identity` flag (hybrid architecture is
-   decided and its artifacts are saved — see "Current state" above and the
-   Phase 2 Tier 2 section's "Segmented model" results). Then move to the
-   Cost-Sensitive Decision Framework.
+   decided, production config is SMOTE 1:10 + tuned hyperparameters, and
+   artifacts are saved to `models/` — see "Current state" above and the
+   Phase 2 Tier 2 section's "Segmented model" / "SMOTE ablation" /
+   "Hyperparameter tuning" results). Then move to the Cost-Sensitive
+   Decision Framework.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
