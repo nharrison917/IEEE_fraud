@@ -1187,35 +1187,46 @@ against.
 - Commit by concern, not by session
 
 **Current state (end of session 9):**
-- main: Phase 1 **and** Phase 2 Tier 1 merged. PR #2
-  (`feature/phase2-feature-engineering`) merged 2026-07-06.
-- `feature/phase2-tier2-and-segmentation`: 10 commits ahead of main (Tier 2
-  v1→v2→v3, error analysis, segmentation, SMOTE ablation, hyperparameter
-  tuning, inference wiring, the `combo_amt_zscore` bug fix, and the
-  LightGBM/XGBoost ensemble). Pushed to origin; **PR #3 open against
-  main, not yet merged.** `models/production_metrics.json` and
+- main: Phase 1, Phase 2 Tier 1, **and** Phase 2 Tier 2/segmentation/
+  ensemble all merged. PR #2 (`feature/phase2-feature-engineering`)
+  merged 2026-07-06; **PR #3 (`feature/phase2-tier2-and-segmentation`)
+  merged 2026-07-07** (merge commit, not squash — `gh pr merge 3 --merge`,
+  matching PR #2's method). `models/production_metrics.json` and
   `models/hybrid_val_metrics.json` hold the final post-fix, post-ensemble
   numbers — see "Model divergence analysis" and "Ensemble" sections above.
-- **`feature/phase2-cost-sensitivity`**: created off
-  `feature/phase2-tier2-and-segmentation`'s tip (not off main, and not
-  waiting for PR #3 to merge — same rationale as the session-6 branch
-  decision below). **Local only, not yet pushed; no commits yet this
-  branch** — the cost function decision and `cost_threshold_analysis.py`
-  (below) are uncommitted working-tree changes as of end of session 9.
-  Confirm with the user before committing/pushing.
-- **Session 9 work (uncommitted):** defined the Cost-Sensitive Decision
-  Framework's parameter values (payment-processor lens — see "Cost function
-  parameter values" section above), built
-  `phase2_cost_analysis/cost_threshold_analysis.py`, ran the val threshold
-  sweep + sensitivity analysis + one-time test confirmation across all
-  three `HybridModel` algorithm choices. Ensemble wins on val (cost-optimal
-  threshold 0.03); documented the aggressive resulting flag rate (~15.6%)
-  as a named limitation rather than adding an unjustified capacity
-  constraint (user decision).
-- **Next action:** build the Streamlit dashboard (model selector,
-  threshold slider, operational reality panel, sensitivity chart) reading
-  from `models/cost_dashboard_data.json` — the last deliverable of Phase 2's
-  Cost-Sensitive Decision Framework.
+- **`feature/phase2-cost-sensitivity`**: rebased onto the updated main
+  right after PR #3 merged (clean, since the branch was still local-only
+  and unpushed at that point — no force-push needed). 3 commits ahead of
+  main, **still local-only, not yet pushed**:
+  1. PLAN.md sync (carried over from session 8, was never actually part
+     of PR #3 — it was cost-sensitivity's own first commit even before
+     this session started).
+  2. Cost-Sensitive Decision Framework: payment-processor cost lens (see
+     "Cost function parameter values" section above),
+     `phase2_cost_analysis/cost_threshold_analysis.py`, val threshold
+     sweep + sensitivity analysis + one-time test confirmation across all
+     three `HybridModel` algorithm choices. Ensemble wins on val
+     (cost-optimal threshold 0.03); the aggressive resulting flag rate
+     (~15.6%) documented as a named limitation rather than masked with an
+     unjustified capacity constraint (user decision).
+  3. `app.py` (Streamlit dashboard reading `models/cost_dashboard_data.json`)
+     — model selector, live threshold/cost-parameter sliders (linear
+     decomposition trick, generalized to two parameters across all three
+     algorithms), sensitivity charts, operational reality panel. Verified
+     end-to-end with a Playwright driver (no `chromium-cli` available in
+     this environment) rather than just launched — captured as a project
+     skill at `.claude/skills/run-ieee-fraud/` (unignored from the user's
+     global `.claude/`-blocking gitignore via explicit negation rules in
+     this project's `.gitignore`).
+- **Phase 2's Cost-Sensitive Decision Framework is now complete** —
+  cost function decided, threshold optimization + sensitivity analysis
+  run, test set confirmed once, dashboard built and verified.
+- **Next action:** not yet decided. Candidates: push this branch and open
+  its own PR against main; write up Phase 2 findings for the portfolio
+  README; deploy the dashboard to Streamlit Community Cloud (original
+  PLAN.md target, "Note: data size may require pre-computing dashboard
+  data at model run time" — already satisfied, since `app.py` reads the
+  pre-computed `cost_dashboard_data.json` rather than loading raw data).
 
 ---
 
@@ -1227,20 +1238,18 @@ When starting a new session:
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status`, `git branch`, and `git log --oneline` — work
-   continues on `feature/phase2-cost-sensitivity` (created off
-   `feature/phase2-tier2-and-segmentation`'s tip; PR #3 for that parent
-   branch is open against main but not yet merged, which is fine to
-   develop alongside per the session-6 branching precedent). As of end of
-   session 9 this branch has **no commits yet** — `cost_threshold_analysis.py`
-   and its outputs are uncommitted working-tree changes; confirm with the
-   user before committing.
-6. **Next action:** the cost function's parameter values are decided and
-   implemented (session 9 — payment-processor lens, see "Cost function
+   continues on `feature/phase2-cost-sensitivity`, now rebased onto main
+   (PR #3 merged 2026-07-07, so main includes Tier 2/segmentation/ensemble
+   too). 3 commits ahead of main, **still local-only, not yet pushed** —
+   confirm with the user before pushing / opening a PR.
+6. **Phase 2's Cost-Sensitive Decision Framework is done**: cost function
+   decided (session 9 — payment-processor lens, see "Cost function
    parameter values" section), threshold-sweep + sensitivity + one-time
-   test confirmation are done (`phase2_cost_analysis/cost_threshold_analysis.py`).
-   Remaining Phase 2 deliverable: the **Streamlit dashboard** (model
-   selector, threshold slider, operational reality panel, sensitivity
-   chart), reading from `models/cost_dashboard_data.json`.
+   test confirmation done (`phase2_cost_analysis/cost_threshold_analysis.py`),
+   Streamlit dashboard built and verified (`app.py`, plus the
+   `.claude/skills/run-ieee-fraud/` project skill for re-verifying it).
+   **Next action not yet decided** — see "Current state" above for
+   candidates (push + PR, README write-up, Streamlit Cloud deploy).
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
