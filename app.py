@@ -195,14 +195,15 @@ winner_default = next(r for r in test_results if r["algo_key"] == WINNER_KEY and
 savings = winner_default["total_cost"] - winner_test["total_cost"]
 sav_pct = savings / winner_default["total_cost"] * 100
 
+st.caption(f"Production choice: **{ALGO_LABELS[WINNER_KEY]}**")
 c1, c2, c3 = st.columns(3)
 c1.metric(
-    label=f"{ALGO_LABELS[WINNER_KEY]} -- Cost-Optimal (threshold {WINNER_THRESH:.2f})",
+    label=f"Cost-Optimal (threshold {WINNER_THRESH:.2f})",
     value=f"${winner_test['total_cost']:,.0f}",
     help="Production choice: chosen on validation, confirmed once on test.",
 )
 c2.metric(
-    label=f"{ALGO_LABELS[WINNER_KEY]} -- Default Threshold (0.50)",
+    label="Default Threshold (0.50)",
     value=f"${winner_default['total_cost']:,.0f}",
 )
 c3.metric(

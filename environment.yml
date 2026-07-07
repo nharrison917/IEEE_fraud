@@ -12,7 +12,4 @@ dependencies:
   - imbalanced-learn
   - plotly
   - streamlit
-  - jupyter
-  - ipykernel
   - joblib
-  - category_encoders
