@@ -102,7 +102,17 @@ def add_entity_velocity_features(df):
     cumsum_sq_prior = cumsum_sq_incl - sq
     prior_var = (cumsum_sq_prior / count) - prior_mean ** 2
     prior_std = np.sqrt(prior_var.clip(lower=0))
-    amt_zscore = (amt - prior_mean) / prior_std.replace(0, np.nan)
+    # An entity whose prior transactions are all the *same* amount (e.g. a
+    # recurring subscription charge) has a genuine std of exactly 0 -- not
+    # "insufficient data" the way a single prior transaction is. Dividing by
+    # the raw 0 produced NaN either way, hiding the difference between "we
+    # can't tell" and "we can tell, and it's remarkably consistent." Flooring
+    # std at 1% of the prior mean (min 1 cent) keeps a real zero-variance
+    # history informative: an exact repeat still zscores to 0, and any
+    # deviation from a hyper-consistent history still produces a large,
+    # correctly-signed value instead of NaN.
+    prior_std_floor = np.maximum(prior_std, np.maximum(prior_mean.abs() * 0.01, 0.01))
+    amt_zscore = (amt - prior_mean) / prior_std_floor
 
     prev_addr1 = grp["addr1"].shift(1)
     addr1_changed = (
