@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cost-Sensitive Fraud Detection -- Report</title>
+<style>
+  body      { font-family: Arial, sans-serif; max-width: 980px; margin: 40px auto; color: #222; line-height: 1.65; }
+  h1        { color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 8px; }
+  h2        { color: #283593; margin-top: 44px; }
+  .meta     { color: #666; font-size: 0.9em; margin-bottom: 28px; }
+  .box-warn { background: #fff8e1; border-left: 5px solid #f9a825; padding: 14px 20px; margin: 20px 0; border-radius: 4px; }
+  .box-good { background: #e8f5e9; border-left: 5px solid #2e7d32; padding: 14px 20px; margin: 20px 0; border-radius: 4px; font-size: 1.05em; }
+  .box-info { background: #e3f2fd; border-left: 5px solid #1565c0; padding: 14px 20px; margin: 20px 0; border-radius: 4px; }
+  .box-risk { background: #fce4ec; border-left: 5px solid #c62828; padding: 14px 20px; margin: 20px 0; border-radius: 4px; }
+  table     { border-collapse: collapse; width: 100%; font-size: 0.83em; margin: 14px 0; }
+  th        { background: #1a237e; color: #fff; padding: 9px 10px; text-align: right; white-space: nowrap; }
+  th:first-child, th:nth-child(2) { text-align: left; }
+  td        { padding: 7px 10px; border-bottom: 1px solid #ddd; text-align: right; }
+  td:first-child, td:nth-child(2) { text-align: left; }
+  tr:hover  { background: #f5f5f5; }
+  small     { color: #888; }
+</style>
+</head>
+<body>
+
+<h1>Cost-Sensitive Fraud Detection Analysis</h1>
+<div class="meta">
+  Generated: July 07, 2026 &nbsp;|&nbsp;
+  Dataset: IEEE-CIS Fraud Detection (Vesta e-commerce transactions) &nbsp;|&nbsp;
+  Models: LightGBM &nbsp;&nbsp; XGBoost &nbsp;&nbsp; Ensemble (0.70 XGB / 0.30 LGB)
+</div>
+
+<div class="box-warn">
+  <strong>Assumption Disclosure -- please read before interpreting figures</strong><br>
+  These are <strong>illustrative cost estimates</strong> modeled from a <strong>payment processor's</strong>
+  perspective -- the middleman between merchant and issuer, not the merchant or the card-issuing bank.
+  TransactionAmt's currency/units are not confirmed by Kaggle; figures are relative comparisons, not
+  absolute dollars.
+  <ul>
+    <li>Base FP cost (dispute/support handling): <strong>$3.00</strong> per false decline</li>
+    <li>Friction penalty: <strong>3%</strong> of Amount &nbsp;<small>(forfeited processing-fee revenue + retention-risk allowance)</small></li>
+    <li>Full FP cost: <strong>$3.00 + (3% x Amount)</strong></li>
+    <li>FN cost: <strong>full transaction Amount</strong> &nbsp;<small>(chargeback-guarantee liability model -- common for fraud-decisioning vendors in this market)</small></li>
+  </ul>
+</div>
+
+<h2>Key Findings</h2>
+<div class="box-good">
+  <strong>Production choice:</strong> Ensemble (0.70 XGB / 0.30 LGB) at cost-optimal threshold <strong>0.03</strong>
+  (selected on validation, confirmed once on test)<br>
+  <strong>Test set total cost:</strong> $279,752.30
+  &nbsp;|&nbsp; FP cost: $121,848.25
+  &nbsp;|&nbsp; FN cost: $157,904.05<br>
+  <strong>Recall:</strong> 0.7537
+  &nbsp;|&nbsp; <strong>F1:</strong> 0.2780
+</div>
+
+<h2>Algorithm Comparison -- Test Set</h2>
+<p><small>Green rows = cost-optimal threshold (chosen on validation, applied here once).</small></p>
+<table>
+  <tr>
+    <th>Algorithm</th><th>Threshold Type</th><th>Threshold</th>
+    <th>Total Cost</th><th>FP Cost</th><th>FN Cost</th>
+    <th>n FP</th><th>n FN</th>
+    <th>Precision</th><th>Recall</th><th>F1</th>
+  </tr>
+  <tr style="background:#e8f5e9;"><td>LightGBM</td><td>Cost-Optimal (val)</td><td>0.03</td><td>$305,142</td><td>$127,629</td><td>$177,513</td><td>15364</td><td>1154</td><td>0.159</td><td>0.716</td><td>0.261</td></tr>
+<tr><td>LightGBM</td><td>0.5 Default</td><td>0.50</td><td>$492,510</td><td>$2,739</td><td>$489,771</td><td>410</td><td>2823</td><td>0.752</td><td>0.305</td><td>0.434</td></tr>
+<tr style="background:#e8f5e9;"><td>XGBoost</td><td>Cost-Optimal (val)</td><td>0.03</td><td>$279,752</td><td>$121,848</td><td>$157,904</td><td>14911</td><td>1001</td><td>0.170</td><td>0.754</td><td>0.278</td></tr>
+<tr><td>XGBoost</td><td>0.5 Default</td><td>0.50</td><td>$484,327</td><td>$2,330</td><td>$481,997</td><td>390</td><td>2738</td><td>0.773</td><td>0.326</td><td>0.459</td></tr>
+<tr style="background:#e8f5e9;"><td>Ensemble (0.70 XGB / 0.30 LGB)</td><td>Cost-Optimal (val)</td><td>0.03</td><td>$280,056</td><td>$127,102</td><td>$152,954</td><td>15419</td><td>986</td><td>0.166</td><td>0.757</td><td>0.273</td></tr>
+<tr><td>Ensemble (0.70 XGB / 0.30 LGB)</td><td>0.5 Default</td><td>0.50</td><td>$487,345</td><td>$2,067</td><td>$485,278</td><td>349</td><td>2760</td><td>0.789</td><td>0.321</td><td>0.456</td></tr>
+</table>
+
+<h2>Operational Interpretation</h2>
+<div class="box-info">
+  At a cost-optimal threshold of <strong>0.03</strong>,
+  for every <strong>1,000,000 transactions</strong> Ensemble (0.70 XGB / 0.30 LGB) flags approximately
+  <strong>156,611</strong> as fraud, of which approximately
+  <strong>26,061</strong> are genuine fraud caught and
+  <strong>130,550</strong> are false alarms (declined legitimate checkouts).
+  The estimated fee-loss and friction cost of false alarms is
+  <strong>$1,076,150</strong>, offset against approximately
+  <strong>$1,295,034</strong> in fraud prevented,
+  for a net saving of approximately <strong>$2,793,024</strong>
+  compared to no fraud detection.
+</div>
+
+<h2>Sensitivity Analysis</h2>
+<p>(a) FP base cost scenarios (friction rate fixed at 3%):</p>
+<table>
+  <tr><th style="text-align:left">FP Base Cost</th><th>Optimal Threshold</th><th>Total Cost (validation)</th></tr>
+  <tr><td>$1</td><td>0.02</td><td>$215,445.12</td></tr>
+<tr><td>$3</td><td>0.03</td><td>$255,922.03</td></tr>
+<tr><td>$5</td><td>0.04</td><td>$278,336.49</td></tr>
+<tr><td>$10</td><td>0.06</td><td>$314,678.19</td></tr>
+</table>
+<p>(b) Friction rate scenarios (base FP cost fixed at $3.00):</p>
+<table>
+  <tr><th style="text-align:left">Friction Rate</th><th>Optimal Threshold</th><th>Total Cost (validation)</th></tr>
+  <tr><td>1%</td><td>0.02</td><td>$188,052.75</td></tr>
+<tr><td>3%</td><td>0.03</td><td>$255,922.03</td></tr>
+<tr><td>5%</td><td>0.05</td><td>$291,104.77</td></tr>
+<tr><td>10%</td><td>0.07</td><td>$349,713.30</td></tr>
+</table>
+
+<h2>Limitations</h2>
+<div class="box-risk">
+<ul>
+  <li><strong>Cost lens is a modeling choice:</strong> the payment-processor framing (fee loss + retention
+      risk for FP, chargeback-guarantee liability for FN) was chosen to match this project's job-application
+      target. A merchant or issuer would see a materially different cost structure.</li>
+  <li><strong>Chargeback-guarantee assumption is general industry knowledge, not verified from this
+      project's data:</strong> not every processor contract works this way.</li>
+  <li><strong>Currency/units unconfirmed:</strong> TransactionAmt's scale is not officially documented by Kaggle.
+      All costs are relative comparisons.</li>
+  <li><strong>Real-time scoring gap:</strong> Tier 2 entity-velocity features require each entity's full prior
+      history, computed offline here. A production service would need a persisted per-entity running-state
+      store (see phase2_feature_engineering/inference.py docstring).</li>
+  <li><strong>Retention-risk cost is not independently estimated:</strong> folded into the 3% friction rate
+      as an allowance, not derived from a separate churn model.</li>
+  <li><strong>The cost function has no term for the AGGREGATE false-decline rate -- only its sum:</strong>
+      the pure cost-minimizing threshold (0.03) flags approximately <strong>15.6%</strong> of all
+      validation transactions. Each individual false decline is priced correctly, but a processor
+      declining 1 in 6 legitimate checkouts would in practice trigger merchant churn through a
+      threshold/nonlinear effect this linear, per-transaction cost function cannot see -- it only
+      prices friction transaction-by-transaction, not the reputational cost of a systematically high
+      decline rate. Reported here deliberately rather than hidden behind a capacity constraint, so the
+      gap between "cost-optimal in theory" and "operationally deployable" is visible.</li>
+</ul>
+</div>
+
+</body>
+</html>
