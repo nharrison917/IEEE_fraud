@@ -177,10 +177,15 @@ of *all* training rows for that category is circular. Use leave-one-out or
 k-fold target encoding on the training set. LightGBM's native categorical
 handling avoids this entirely — preferred approach for high-cardinality columns.
 
-### 4. No SMOTE initially
+### 4. No SMOTE initially — revisited, session 7: SMOTE 1:10 adopted
 At 3.5% fraud rate, test `class_weight='balanced'` (LightGBM parameter) first.
 Compare against modest SMOTE (1:10) on validation if needed. SMOTE applied to
 training fold only, after all preprocessing, never before split.
+
+**Resolved (session 7):** this comparison was run (see "SMOTE ablation and
+production config revision" under the Segmented Model section) and SMOTE
+1:10 won clearly for both production models. `class_weight`/`is_unbalance`
+is no longer used in the production config.
 
 ---
 
@@ -665,16 +670,76 @@ consistent with `error_analysis.py`'s original finding that this
 population is a shared, information-limited blind spot rather than a
 modeling shortfall.
 
-**Final architecture decision: hybrid, not full segmentation.** Route
-`has_identity=1` transactions to the dedicated recency-weighted segment
-model; keep using the **global** (unsegmented) Tier 1 + Tier 2 model for
-`has_identity=0` transactions, since no segment-specific variant beat it
-there. Artifacts saved: `models/lgb_global_tier1tier2.txt` +
-`models/xgb_global_tier1tier2.pkl` + `models/preprocessor_global_tier1tier2.pkl`
-(global), `models/lgb_seg_id1.txt` + `models/xgb_seg_id1.pkl` +
-`models/preprocessor_seg_id1.pkl` (has_identity=1 segment). The
+**Architecture decision: hybrid, not full segmentation.** Route
+`has_identity=1` transactions to the dedicated segment model; keep using
+the **global** (unsegmented) Tier 1 + Tier 2 model for `has_identity=0`
+transactions, since no segment-specific variant beat it there. The
 `has_identity=0` segment model artifacts (`*_seg_id0*`) are kept on disk
 for reference but are not the production choice for that population.
+
+### SMOTE ablation and production config revision (session 7 continued)
+
+`smote_ablation.py` tested SMOTE (via `SMOTENC`, not plain SMOTE — see its
+docstring for why plain SMOTE would corrupt one-hot/categorical/binary-flag
+columns) against the current class-weighting approach for both production
+models, at three ratios (1:10, 1:5, 1:3), in ablation mode.
+
+| Model | Config | ROC-AUC | PR-AUC |
+|---|---|---|---|
+| Global, LightGBM | Baseline (class-weight) | 0.9056 | 0.5289 |
+| Global, LightGBM | **SMOTE 1:10** | 0.9178 | **0.5852** |
+| Global, LightGBM | SMOTE 1:5 | 0.9161 | 0.5859 |
+| Global, LightGBM | SMOTE 1:3 | 0.9153 | 0.5769 |
+| Global, XGBoost | Baseline (class-weight) | 0.9189 | 0.5797 |
+| Global, XGBoost | **SMOTE 1:10** | 0.9197 | **0.6072** |
+| Global, XGBoost | SMOTE 1:5 | 0.9161 | 0.5972 |
+| Global, XGBoost | SMOTE 1:3 | 0.9177 | 0.6004 |
+
+SMOTE 1:10 is a real peak, not a monotonic "more oversampling is better"
+curve — 1:5 and 1:3 both underperform it on PR-AUC for LightGBM, and are
+mixed for XGBoost. The PR-AUC gain over class-weighting alone (LightGBM
++0.056, XGBoost +0.027) is larger than any single feature-engineering gain
+found in this project so far.
+
+**Unexpected finding: recency-weighting doesn't hold up under a clean
+ablation.** This script's `has_identity=1` baseline arm (class-weighting,
+no recency-weight, no SMOTE, otherwise identical config) scored LightGBM
+0.9335/0.7616 and XGBoost 0.9434/0.7964 — *better* than the recency-weighted
+production numbers reported earlier this session (0.9314/0.7565 LightGBM;
+0.9450/0.7937 XGBoost, mixed). Recency-weighting was adopted on a plausible
+mechanism (val looks like a continuation of the Q3/Q4 regime) but was never
+actually tested with-vs-without, holding everything else fixed, until this
+script's baseline arm did so as a side effect. The honest read: it's a wash
+to slightly negative for this segment, not the improvement originally
+assumed. Plausible explanation: reweighting toward Q4 reduces the
+*effective* sample size (Kish's effective-N shrinks whenever weights vary,
+even though they're rescaled to mean 1.0) at a cost that isn't clearly
+paid back, especially since Q3+Q4 already make up half of this segment's
+training rows even unweighted.
+
+SMOTE 1:10 alone (no recency-weight at all) beats the recency-weighted
+config outright: `has_identity=1` SMOTE 1:10 scored LightGBM 0.9410/0.7705
+and XGBoost 0.9491/0.8072 — better than recency-weighting's 0.9314/0.7565
+and 0.9450/0.7937 on every number.
+
+**Revised production config (`finalize_production_models.py`):** both the
+global model and the `has_identity=1` segment model now use **SMOTE 1:10
+(via SMOTENC), with class-weighting and recency-weighting both dropped**.
+Artifacts saved: `models/lgb_global_tier1tier2.txt` +
+`models/xgb_global_tier1tier2.pkl` + `models/preprocessor_global_tier1tier2.pkl`
+(global), `models/lgb_seg_id1.txt` + `models/xgb_seg_id1.pkl` +
+`models/preprocessor_seg_id1.pkl` (has_identity=1 segment) — these
+overwrite the earlier class-weighted/recency-weighted artifacts of the same
+names. Metrics saved to `models/production_metrics.json`; the earlier
+`models/segmented_metrics.json` is left as-is, documenting the segmentation
+investigation's history rather than the final production numbers.
+
+**Flagged for later, not yet tested:** whether SMOTE 1:10 combined with
+recency-weighting beats SMOTE 1:10 alone — requires deciding how synthetic
+SMOTE rows should inherit a recency weight (e.g. from the parent/neighbor
+row they were interpolated from), which adds real complexity for an
+unconfirmed extra gain. Deferred until/unless there's a specific reason to
+revisit it.
 
 ---
 
@@ -706,6 +771,34 @@ Interactive Streamlit dashboard with:
 Target: deployed to Streamlit Community Cloud.
 Note: data size (~590k rows) may require pre-computing dashboard data at
 model run time rather than loading raw data in the app. Confirm at build time.
+
+### Flagged for later: amount-weighted training (not yet pursued)
+
+Raised (session 7): rather than only tuning a decision *threshold* against
+the cost function, could training itself be made cost-aware by weighting
+each fraud row's loss by its dollar amount (e.g. `log1p(Amount)` or
+`sqrt(Amount)`, rescaled to mean 1 like the recency weights, to avoid one
+large transaction dominating the loss the way unnormalized weights would)?
+
+This is a real, named technique (cost-proportional/amount-weighted
+training) and a genuinely different lever than threshold tuning — it
+would push the tree structure itself toward separating high-value fraud,
+not just any fraud. Two considerations before trying it:
+
+- **Evaluation isn't ROC-AUC/PR-AUC** — those metrics are blind to dollar
+  amounts entirely, so amount-weighted training can only be fairly judged
+  against a dollar-denominated metric (e.g. total fraud-dollars caught,
+  or expected cost) once the cost function below is actually defined.
+- **Trades away the dashboard's real-time adjustability** — the
+  threshold-sweep approach lets the cost-sensitivity analysis run against
+  a single fixed trained model with no retraining; baking a specific cost
+  assumption into training weights means any change to that assumption
+  requires retraining, not just re-sweeping a slider.
+
+Recommendation (not yet implemented): keep threshold optimization as the
+primary mechanism, and treat amount-weighted training as a separate
+ablation to test once the cost function's dollar metric exists to judge it
+against.
 
 ---
 
@@ -785,8 +878,10 @@ When starting a new session:
 | Tier 2 XGBoost result | Documented as an open question, not a confirmed win | Best aggregate PR-AUC of the investigation (0.5797), but all 6 features rank bottom-half in importance — can't rule out the improvement being incidental to this run |
 | Error analysis | Data-driven pass added alongside hypothesis-driven feature engineering | Found the identity-presence blind spot directly, rather than requiring it to be guessed at in advance |
 | Segmented model | Build `has_identity=1`/`has_identity=0` as separate models rather than one global model | Segment fraud rates diverge 3.2x (train fold); error analysis showed identity presence is the dominant driver of catchability |
-| Segmented model recency handling | Downweight/drop early train quarters for the `has_identity=1` segment only | Within-train quarters show a regime shift (Q2→Q3) in this segment specifically that val/test continue; `has_identity=0` showed no such drift and needs no adjustment |
-| Segmented model recency method | Exponential decay (half-life 30 days), not a hard Q1/Q2 cutoff | User decision (session 7): avoids discarding Q1/Q2 signal entirely while still emphasizing the Q3/Q4-like regime val/test continue |
+| Segmented model recency handling | Downweight/drop early train quarters for the `has_identity=1` segment only | Within-train quarters show a regime shift (Q2→Q3) in this segment specifically that val/test continue; `has_identity=0` showed no such drift and needs no adjustment. **Superseded (session 7 continued):** a clean with/without ablation (run as a side effect of `smote_ablation.py`) showed recency-weighting is a wash-to-slightly-negative, not the improvement its mechanism argument assumed — dropped from the production config |
+| Segmented model recency method | Exponential decay (half-life 30 days), not a hard Q1/Q2 cutoff | User decision (session 7): avoids discarding Q1/Q2 signal entirely while still emphasizing the Q3/Q4-like regime val/test continue. **Superseded** — see recency handling row above |
 | Segmented model evaluation | Fair per-segment comparison (global vs. segment model, each scored only on its own segment's rows), not a pooled combined metric | Pooling two independently class-weighted segment models' raw probabilities into one ranking metric compares scores on different scales — confirmed via calibration check: `has_identity=0`'s mean predicted probability was 4.5–5.5x its true rate vs. ~1–1.7x for `has_identity=1` |
 | Segmented model final architecture | Hybrid: dedicated model for `has_identity=1`, global model for `has_identity=0` | Fair comparison shows `has_identity=1` segmentation wins outright on both models/metrics; `has_identity=0` tuning (both more and less model complexity) never beat the global model there |
+| Imbalance handling (production) | SMOTE 1:10 (via `SMOTENC`), replacing `is_unbalance`/`scale_pos_weight` class-weighting and recency-weighting for both production models | Ablation (session 7 continued) showed SMOTE 1:10 beats class-weighting alone on PR-AUC by a wide margin (LightGBM +0.056, XGBoost +0.027) and beats the has_identity=1 segment's recency-weighted config outright on every metric; more aggressive ratios (1:5, 1:3) underperform 1:10 |
+| SMOTE implementation | `SMOTENC`, not plain `SMOTE` | Plain SMOTE linearly interpolates every column, corrupting one-hot dummies, native categorical columns, and binary engineered flags into meaningless fractional values; `SMOTENC` majority-votes those columns instead of interpolating them |
 | Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |

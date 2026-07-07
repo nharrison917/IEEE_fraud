@@ -1,0 +1,23 @@
+{
+  "imbalance_handling": "SMOTE 1:10 (SMOTENC), no class-weighting, no recency-weighting",
+  "global": {
+    "lgb": {
+      "roc_auc": 0.9177922222377827,
+      "pr_auc": 0.5852323601660238
+    },
+    "xgb": {
+      "roc_auc": 0.9196833734693137,
+      "pr_auc": 0.6071826871320818
+    }
+  },
+  "segment_id1": {
+    "lgb": {
+      "roc_auc": 0.9409970095510631,
+      "pr_auc": 0.7704989160562501
+    },
+    "xgb": {
+      "roc_auc": 0.949120764010439,
+      "pr_auc": 0.8071707060450487
+    }
+  }
+}
