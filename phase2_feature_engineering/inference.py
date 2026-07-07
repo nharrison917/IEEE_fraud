@@ -25,6 +25,19 @@ Each of LightGBM and XGBoost is a separate "model" choice (dashboard model
 selector). The routing behavior differs between them by design -- this
 isn't an oversight, it's what the val-set evidence supports for each.
 
+**Production default is now a third choice: "ensemble"** (added this
+session, after model_divergence_analysis.py showed the two algorithms
+agree on only ~68% of fraud cases -- Spearman rank correlation ~0.75, not
+~1.0 -- and ensemble_test.py confirmed a weighted blend of their outputs
+beats either standalone algorithm on val PR-AUC, not just in theory).
+`predict(df, algorithm="ensemble")` runs both algorithms (each through its
+own routing above) and returns `_ENSEMBLE_WEIGHT_XGB * xgb_prob +
+(1 - _ENSEMBLE_WEIGHT_XGB) * lgb_prob`. The weight (0.70) was chosen by a
+0.0-1.0 grid search in steps of 0.05 on val; see
+`phase2_feature_engineering/ensemble_weight_sweep.json` -- PR-AUC forms a
+broad plateau (0.55-0.85 all within 0.004 of the peak), not a narrow spike,
+so this isn't an overfit pick of one lucky weight.
+
 IMPORTANT LIMITATION (documented for the write-up): Tier 2 entity-velocity
 features (combo_prior_txn_count, combo_time_since_last, etc.) are causal,
 expanding-window aggregates that depend on each entity's full prior
@@ -55,6 +68,10 @@ from phase2_feature_engineering.tier2_features import add_entity_velocity_featur
 
 MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
 
+# Winning weight from ensemble_test.py's 0.0-1.0 grid search (see module
+# docstring) -- share of the blend given to XGBoost's prediction.
+_ENSEMBLE_WEIGHT_XGB = 0.70
+
 
 def build_features(df):
     """Run on the full joined dataset, before any split -- entity velocity
@@ -81,26 +98,36 @@ class HybridModel:
         with open(os.path.join(models_dir, "xgb_seg_id1.pkl"), "rb") as f:
             self.xgb_id1 = pickle.load(f)
 
-    def predict(self, df_features, algorithm="xgb"):
+    def predict(self, df_features, algorithm="ensemble"):
         """
         df_features: dataframe that has already been through build_features()
         (has_identity, Tier 1, and Tier 2 columns all present) -- raw schema,
         pre-Preprocessor.
 
-        algorithm: "lgb" or "xgb" -- the dashboard's model-selector axis.
-        Routing behavior differs by algorithm (see module docstring):
+        algorithm: "lgb", "xgb", or "ensemble" (default -- the recommended
+        production choice) -- the dashboard's model-selector axis. Routing
+        behavior differs by algorithm (see module docstring):
           - "xgb": has_identity==1 -> seg_id1 model, has_identity==0 ->
             global model (hybrid routing -- segment model wins on its own
             subset for this algorithm).
           - "lgb": global model for every row, regardless of has_identity
             (global model now wins on the has_identity=1 subset too, for
             this algorithm, under the current SMOTE+tuning config).
+          - "ensemble": _ENSEMBLE_WEIGHT_XGB * xgb_prob + (1 - that) *
+            lgb_prob, where xgb_prob/lgb_prob are each already routed per
+            their own rule above. Beats either standalone algorithm on val
+            PR-AUC -- see module docstring.
 
         Returns a pandas Series of fraud probabilities aligned to
         df_features.index.
         """
-        if algorithm not in ("lgb", "xgb"):
-            raise ValueError(f"algorithm must be 'lgb' or 'xgb', got {algorithm!r}")
+        if algorithm not in ("lgb", "xgb", "ensemble"):
+            raise ValueError(f"algorithm must be 'lgb', 'xgb', or 'ensemble', got {algorithm!r}")
+
+        if algorithm == "ensemble":
+            lgb_prob = self.predict(df_features, algorithm="lgb")
+            xgb_prob = self.predict(df_features, algorithm="xgb")
+            return _ENSEMBLE_WEIGHT_XGB * xgb_prob + (1 - _ENSEMBLE_WEIGHT_XGB) * lgb_prob
 
         probs = pd.Series(index=df_features.index, dtype=float)
 
@@ -146,8 +173,12 @@ def main():
     model = HybridModel()
 
     results = {}
-    for algo in ("lgb", "xgb"):
-        routed = "hybrid routing (seg_id1 for has_identity=1)" if algo == "xgb" else "global model for all rows (no routing)"
+    for algo in ("lgb", "xgb", "ensemble"):
+        routed = {
+            "lgb": "global model for all rows (no routing)",
+            "xgb": "hybrid routing (seg_id1 for has_identity=1)",
+            "ensemble": f"{_ENSEMBLE_WEIGHT_XGB:.2f}*xgb + {1 - _ENSEMBLE_WEIGHT_XGB:.2f}*lgb (each per its own routing above)",
+        }[algo]
         print(f"\n--- Algorithm: {algo.upper()} -- {routed} ---")
         probs = model.predict(val_raw, algorithm=algo)
 

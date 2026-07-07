@@ -859,6 +859,138 @@ against train+val only, per the "touch test once" rule. The one-time test
 confirmation belongs to the Cost-Sensitive Decision Framework's threshold
 step below.
 
+**Superseded by the bug fix and ensemble work directly below** — the table
+above predates both. See "Model divergence analysis" and "Ensemble" for the
+current numbers and the final production default.
+
+### Model divergence analysis (session 8 continued): where LightGBM and XGBoost actually disagree
+
+Prompted by a step-back question: given two production algorithms, are
+their strengths different enough for that to matter, and where specifically?
+`phase2_feature_engineering/model_divergence_analysis.py` scores the full
+val set with each algorithm's actual production routing (not a fresh
+ablation retrain) and compares by **rank percentile** rather than raw
+probability, since the two algorithms sit on different scales after
+algorithm-specific routing.
+
+Spearman rank correlation across the full val set: **0.745** — substantial
+agreement, but far from 1.0. Among the 4,611 val fraud cases (top-decile
+"catch" vs. bottom-half "miss" thresholds):
+
+| Outcome | Count | % |
+|---|---|---|
+| Both catch | 3,144 | 68.2% |
+| Neither catches (shared blind spot) | 77 | 1.7% |
+| XGBoost catches, LightGBM misses | 17 | 0.4% |
+| LightGBM catches, XGBoost misses | 7 | 0.2% |
+
+The shared blind spot is 84% `ProductCD=W` with only 14% `has_identity` —
+the same non-identity blind spot `error_analysis.py` found originally, now
+confirmed genuinely shared rather than one model quietly covering for the
+other.
+
+**Traced a concrete bug from the top-divergence list, not just a vague
+"models differ."** The 10 legitimate transactions with the largest
+model disagreement included exact repeats: `card1=14675` charging **$37.34
+three separate times**, `card1=16819` charging **$49.00 twice**. LightGBM
+scored these near-zero risk (percentile 0.01–0.07); XGBoost scored them
+0.85–0.92. Root cause: `tier2_features.py`'s `combo_amt_zscore` divided by
+a prior standard deviation of exactly 0 (an entity whose prior transactions
+are all identical amounts — precisely what a recurring subscription looks
+like) and produced `NaN` rather than a meaningful value, and the two
+algorithms' native missing-value handling diverged sharply on that one
+engineered column.
+
+**Fix (`tier2_features.py`):** floor the prior std at 1% of the prior mean
+(minimum 1 cent) before dividing, instead of replacing exactly-0 std with
+`NaN`. An exact repeat still zscores to 0 (no deviation from a
+hyper-consistent history); any deviation from a hyper-consistent history
+now produces a large, correctly-signed value instead of erasing the signal.
+`combo_prior_txn_count` already tells the model how much history backs this
+number, so weak evidence at low counts isn't hidden — it's left for the
+model to weight.
+
+**Retrained both production model pairs** (`finalize_production_models.py`
+then `finalize_tuned_models.py`) on the corrected feature. Net effect:
+XGBoost improved, LightGBM regressed slightly — the bug had been
+disproportionately confusing XGBoost, consistent with it being the model
+whose false-positive scores on the recurring-payment rows were most
+extreme before the fix.
+
+| Model | Metric | Pre-fix | Post-fix | Delta |
+|---|---|---|---|---|
+| Global LightGBM (tuned) | PR-AUC | 0.5974 | 0.5875 | −0.0099 |
+| Global XGBoost (tuned) | PR-AUC | 0.6144 | 0.6174 | +0.0030 |
+| has_identity=1 LightGBM (tuned) | PR-AUC | 0.7789 | 0.7751 | −0.0038 |
+| has_identity=1 XGBoost (unchanged config) | PR-AUC | 0.8072 | 0.8084 | +0.0012 |
+
+Re-ran the LightGBM global-vs-segment routing check under the fixed
+feature before assuming the session-8 routing decision still held: global
+still beats segment on PR-AUC (0.7824 vs 0.7751) — same direction as
+before the fix, so **no routing change needed**, but this was verified,
+not assumed.
+
+Re-running `model_divergence_analysis.py` post-fix confirmed the specific
+$37.34/$49.00 repeat-amount false positives are gone from the top-10 most
+divergent legitimate transactions, though a few structurally similar
+low-history cases remain (expected — the fix makes low-count z-scores more
+informative, not silent, so genuinely weak evidence still occasionally
+produces a large value). Post-fix agreement breakdown shifted slightly:
+both-catch 67.5%, neither-catches 2.0%, XGBoost-only 19 (was 17),
+LightGBM-only dropped to 1 (was 7) — LightGBM now contributes almost no
+*exclusive* fraud catches, which sets up the ensemble finding below.
+
+Saved: `phase2_feature_engineering/model_divergence.html` +
+`model_divergence.json`.
+
+### Ensemble (session 8 continued): blending beats either algorithm alone — new production default
+
+Divergence alone doesn't prove blending helps — `ensemble_test.py` tested
+it directly, sweeping a weighted average `w * xgb_prob + (1-w) * lgb_prob`
+from `w=0.0` to `w=1.0` in steps of 0.05, on the full val set, using each
+algorithm's actual production-routed output (not a fresh retrain).
+
+| Config | ROC-AUC | PR-AUC |
+|---|---|---|
+| LightGBM alone (`w=0.0`) | 0.9142 | 0.5875 |
+| XGBoost alone (`w=1.0`) | 0.9282 | 0.6178 |
+| 50/50 raw average (`w=0.5`) | 0.9314 | 0.6235 |
+| **Best: `w=0.70`** | **0.9320** | **0.6265** |
+
++0.0086 PR-AUC over standalone XGBoost (the stronger single model) — the
+largest single gain of any change made after the initial feature-engineering
+phase. Not a fragile spike: PR-AUC stays within 0.6229–0.6265 across
+`w=0.55`–`0.85`, a broad plateau rather than one lucky grid point.
+
+Raw-probability averaging beat rank-percentile averaging across nearly the
+whole sweep (best raw PR-AUC 0.6265 vs. best rank PR-AUC 0.6197) — the two
+algorithms' calibration is close enough (0.75–0.91x mean-predicted/actual
+ratio) that blending magnitude keeps information rank-blending throws away.
+
+The improvement holds in both segments separately, not just in aggregate —
+checked via `inference.py`'s per-segment breakdown so the aggregate number
+isn't hiding an offsetting loss somewhere:
+
+| Segment | LightGBM alone PR-AUC | XGBoost alone PR-AUC | Ensemble PR-AUC |
+|---|---|---|---|
+| has_identity=1 | 0.7824 | 0.8084 | **0.8127** |
+| has_identity=0 | 0.2978 | 0.3183 | **0.3355** |
+
+**Decision: the ensemble is now the production default.**
+`HybridModel.predict(df, algorithm="ensemble")` (default parameter value)
+runs both algorithms through their own routing above, then blends with the
+fixed weight `_ENSEMBLE_WEIGHT_XGB = 0.70`. `algorithm="lgb"` and
+`algorithm="xgb"` remain available as explicit single-model choices for the
+dashboard's model selector. Weight sweep chart + underlying data saved to
+`phase2_feature_engineering/ensemble_weight_sweep.html` / `.json`.
+
+Note on what this ensemble is *not*: it's a fixed post-hoc blend of two
+already-trained algorithms' final outputs, not a per-row conditional
+("route this row to LightGBM, that row to XGBoost") and not a stacked
+meta-learner. Every row gets scored by both algorithms and blended with the
+same weight, unconditionally — simpler than either alternative, and what
+was actually tested.
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
@@ -946,9 +1078,21 @@ against.
   from being PR-ready. Revised the hybrid architecture decision in the
   process (algorithm-specific routing, not one fixed rule — see "Inference
   pipeline" section above).
+- **Session 8 continued:** a step-back question about the two algorithms'
+  relative strengths led to `model_divergence_analysis.py`, which traced a
+  real bug (`combo_amt_zscore` producing `NaN` instead of a meaningful
+  value for zero-variance entity histories — see "Model divergence
+  analysis" section), fixed it, retrained both production model pairs, and
+  then confirmed via `ensemble_test.py` that a weighted LightGBM/XGBoost
+  blend (`w=0.70` toward XGBoost) beats either standalone algorithm on val
+  PR-AUC. The ensemble is now `inference.py`'s production default —
+  see "Ensemble" section above.
 - **Next action:** Cost-Sensitive Decision Framework — define the cost
   function's parameter values, then threshold-sweep on val and confirm once
-  on test (first test-set touch of the whole project).
+  on test (first test-set touch of the whole project). Use the ensemble
+  (`algorithm="ensemble"`, `inference.py`'s default) as the model under
+  threshold evaluation unless there's a specific reason to evaluate the
+  single algorithms separately.
 
 ---
 
@@ -963,10 +1107,11 @@ When starting a new session:
    branches to see current state
 6. **Next action:** Cost-Sensitive Decision Framework — inference is wired
    up (`phase2_feature_engineering/inference.py`, session 8), production
-   routing is algorithm-specific (XGBoost hybrid, LightGBM global-only —
-   see "Inference pipeline" section and Key Decisions Log). Start by
-   defining the cost function's parameter values, then threshold-sweep on
-   val, then confirm once on test.
+   default is the LightGBM/XGBoost **ensemble** (`algorithm="ensemble"`,
+   weight 0.70 toward XGBoost — see "Ensemble" section and Key Decisions
+   Log), with the two single algorithms available for the dashboard's
+   model selector. Start by defining the cost function's parameter values,
+   then threshold-sweep on val, then confirm once on test.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
@@ -1007,3 +1152,5 @@ When starting a new session:
 | SMOTE implementation | `SMOTENC`, not plain `SMOTE` | Plain SMOTE linearly interpolates every column, corrupting one-hot dummies, native categorical columns, and binary engineered flags into meaningless fractional values; `SMOTENC` majority-votes those columns instead of interpolating them |
 | Hyperparameter tuning scope | Modest randomized search (6 trials/model/algorithm), not an exhaustive grid | Tuning is "if time allows" per project priority, not the main event; adopted 3 of 4 winning configs (Global LightGBM/XGBoost, has_identity=1 LightGBM), kept has_identity=1 XGBoost at its SMOTE-1:10 default since its best trial's margin was too thin relative to the 6-trial selection bias to trust |
 | Git branch structure (session 6) | New branch `feature/phase2-tier2-and-segmentation`, separate from Tier 1's `feature/phase2-feature-engineering` (PR #2) | Confirmed with user: keeps PR #2 scoped to Tier 1 and independently mergeable, rather than growing into an unrelated, harder-to-review PR |
+| `combo_amt_zscore` zero-variance fix (session 8) | Floor prior std at 1% of prior mean (min 1 cent) instead of dividing by a raw 0 and getting `NaN` | A step-back question about the two algorithms' relative strengths led to `model_divergence_analysis.py`, which found LightGBM and XGBoost scoring identical-repeat-amount legitimate transactions (recurring-payment pattern) 0.01-0.07 vs. 0.85-0.92 percentile risk — traced to this feature's `NaN` output for any entity with zero historical variance, handled very differently by each algorithm's native missing-value routing |
+| Production model ensemble (session 8) | Weighted blend `0.70 * xgb_prob + 0.30 * lgb_prob` (each already per its own routing) is now `inference.py`'s default (`algorithm="ensemble"`) | `ensemble_test.py`'s 21-point grid search (w=0.0-1.0, step 0.05) found this beats standalone XGBoost by +0.0086 PR-AUC, holds in both `has_identity` segments separately, and sits in a broad plateau (w=0.55-0.85 all within 0.004) rather than a fragile single-point spike. Motivated by `model_divergence_analysis.py` showing the two algorithms agree on only 67-68% of fraud cases (Spearman ρ=0.745) |
