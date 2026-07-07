@@ -1,0 +1,56 @@
+{
+  "lgb": {
+    "routing": "global model for all rows (no routing)",
+    "id1_rows_as_scored": {
+      "roc_auc": 0.9389527580171702,
+      "pr_auc": 0.7867758191896035
+    },
+    "id0_rows_as_scored": {
+      "roc_auc": 0.8770751878520594,
+      "pr_auc": 0.3195904144795859
+    },
+    "full_val_as_scored": {
+      "roc_auc": 0.9164034073057118,
+      "pr_auc": 0.5974086669362141
+    },
+    "calibration": {
+      "id1_rows": {
+        "mean_pred": 0.09081801397991209,
+        "actual_rate": 0.11020390530499395,
+        "ratio": 0.8240907046675833
+      },
+      "id0_rows": {
+        "mean_pred": 0.017674578486877986,
+        "actual_rate": 0.02169334456613311,
+        "ratio": 0.814746588890259
+      }
+    }
+  },
+  "xgb": {
+    "routing": "hybrid routing (seg_id1 for has_identity=1)",
+    "id1_rows_as_scored": {
+      "roc_auc": 0.949120764010439,
+      "pr_auc": 0.8071707060450487
+    },
+    "id0_rows_as_scored": {
+      "roc_auc": 0.8853619352681138,
+      "pr_auc": 0.32433786657517416
+    },
+    "full_val_as_scored": {
+      "roc_auc": 0.9257138176554239,
+      "pr_auc": 0.6167913098038476
+    },
+    "calibration": {
+      "id1_rows": {
+        "mean_pred": 0.09964201000537136,
+        "actual_rate": 0.11020390530499395,
+        "ratio": 0.9041604263443106
+      },
+      "id0_rows": {
+        "mean_pred": 0.01631510446719302,
+        "actual_rate": 0.02169334456613311,
+        "ratio": 0.7520787962158492
+      }
+    }
+  }
+}

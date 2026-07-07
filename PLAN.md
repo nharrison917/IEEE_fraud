@@ -670,6 +670,16 @@ consistent with `error_analysis.py`'s original finding that this
 population is a shared, information-limited blind spot rather than a
 modeling shortfall.
 
+**Architecture decision revised again (session 8) — see "Inference pipeline"
+below.** The hybrid-vs-global comparison above was run under the pre-SMOTE,
+recency-weighted config. Wiring up real inference re-ran it under the
+current SMOTE 1:10 + tuned config and found the two algorithms now
+disagree: XGBoost still prefers the segment model, LightGBM no longer does.
+"Hybrid, not full segmentation" is no longer the whole story — it's now
+"hybrid for XGBoost, global-only for LightGBM." Left this section's numbers
+as-is (they're the historical record of how the decision was reached) but
+they should not be read as the current production routing on their own.
+
 **Architecture decision: hybrid, not full segmentation.** Route
 `has_identity=1` transactions to the dedicated segment model; keep using
 the **global** (unsegmented) Tier 1 + Tier 2 model for `has_identity=0`
@@ -778,6 +788,77 @@ at its SMOTE-1:10 default** — its best trial's margin (ROC −0.0005 / PR
 be worth adopting. These are the current production hyperparameters;
 numbers reconfirmed in `models/production_metrics.json`.
 
+### Inference pipeline (session 8): hybrid architecture re-validated end-to-end, and revised
+
+`phase2_feature_engineering/inference.py` wires up the callable pipeline
+that was still missing after session 7 — a `HybridModel` class that loads
+both production model pairs once (`preprocessor_global_tier1tier2` +
+`lgb_global_tier1tier2.txt`/`xgb_global_tier1tier2.pkl`, and
+`preprocessor_seg_id1` + `lgb_seg_id1.txt`/`xgb_seg_id1.pkl`) and a
+`build_features(df)` helper that reproduces the exact feature order used
+at training time (`has_identity` → `add_entity_velocity_features` →
+`add_tier1_features`) on the full dataset before any split, since Tier 2's
+entity-velocity features need each entity's complete prior history and
+cannot be computed for a single transaction in isolation. **Real-time
+scoring limitation, worth naming in the write-up:** a production service
+would need a persisted per-entity running-state store (last transaction
+time, running mean/std, last `addr1`) rather than recomputing from raw
+history on every call — out of scope here, but a real gap between this
+project's inference code and an actual deployable service.
+
+First run reproduced `production_metrics.json`'s `segment_id1` numbers
+exactly (ROC/PR to 4 decimals for both LightGBM and XGBoost) — confirms the
+routing and preprocessing wiring is correct, not just plausible.
+
+**Then the first true full-val, routed metric — never actually computed
+before this — showed hybrid routing is a net negative for LightGBM under
+the current config:**
+
+| Algorithm | Global model, has_identity=1 rows only | Segment model, has_identity=1 rows only | Winner |
+|---|---|---|---|
+| LightGBM | PR-AUC **0.7868** | PR-AUC 0.7789 | Global (reversed from session 7's finding) |
+| XGBoost | PR-AUC 0.8022 | PR-AUC **0.8072** | Segment (same direction as session 7, smaller margin: 0.0085 → 0.0050) |
+
+The session-7 "fair comparison" that justified the hybrid architecture
+predates SMOTE 1:10 and hyperparameter tuning — it was never re-run after
+those changed both the global and segment models. Once both share the same
+resampling/tuning treatment, the global LightGBM model's larger training
+set now outweighs the segment model's specialization on this subset —
+the same regularizer/diversifier effect already documented for
+`has_identity=0`, apparently generalizing to `has_identity=1` for this one
+algorithm now that the segment models are less differently-tuned than
+before.
+
+**User decision (session 8): algorithm-specific routing, not one fixed
+architecture.** `HybridModel.predict(df, algorithm=...)` routes
+differently depending on which algorithm is selected:
+- `algorithm="xgb"`: hybrid routing kept — `has_identity==1` → seg_id1
+  model, `has_identity==0` → global model.
+- `algorithm="lgb"`: global model for every row, no routing — the segment
+  model is not used in production for LightGBM at all.
+
+**Final production val numbers (`models/hybrid_val_metrics.json`), full val
+set, each algorithm scored the way it will actually run in production:**
+
+| Algorithm | Routing | ROC-AUC | PR-AUC |
+|---|---|---|---|
+| LightGBM | Global model, all rows | 0.9164 | 0.5974 |
+| XGBoost | Hybrid (segment model for has_identity=1) | **0.9257** | **0.6168** |
+
+XGBoost with hybrid routing is the best full-val PR-AUC of the entire
+project. Calibration check (mean predicted probability vs. actual fraud
+rate, current SMOTE 1:10 config) shows both segments landing in the same
+0.75–0.90x ballpark for both algorithms — a much closer match than the
+4.5–5.5x vs. 1–1.7x mismatch found under the old class-weighted config in
+session 7, consistent with SMOTE 1:10 giving both models a more comparable
+probability scale and making a single pooled/full-val metric a valid read
+now (not just a per-segment one).
+
+Test set NOT touched by any of this — `inference.py`'s `main()` validates
+against train+val only, per the "touch test once" rule. The one-time test
+confirmation belongs to the Cost-Sensitive Decision Framework's threshold
+step below.
+
 ---
 
 ## Phase 2 — Cost-Sensitive Decision Framework
@@ -847,29 +928,27 @@ against.
 - No Co-Authored-By trailers
 - Commit by concern, not by session
 
-**Current state (end of session 7):**
-- main: Phase 1 complete and merged (PR #1)
-- `feature/phase2-feature-engineering`: Tier 1 work, 4 commits, PR #2 open
-  (not yet merged) — covers Tier 1 within-row features, the stale-metrics
-  fix, `has_true_local_hour` + the ablation methodology, and `.gitattributes`
-  housekeeping. Scoped independently of everything below; can merge whenever
-  ready without waiting on Tier 2/segmentation.
-- `feature/phase2-tier2-and-segmentation`: branched from
-  `feature/phase2-feature-engineering`'s tip, 6 commits, **pushed to origin,
-  no PR opened yet**. Covers the Tier 2 v1→v2→v3 journey, the error
-  analysis, the segment fraud-rate diagnostic, the segmented model
-  investigation, the SMOTE ablation (which also reversed the recency-
-  weighting decision — see "SMOTE ablation and production config revision"),
-  and hyperparameter tuning. `models/production_metrics.json` holds the
-  current authoritative production numbers (SMOTE 1:10 + tuned
-  hyperparameters for Global and `has_identity=1` LightGBM/XGBoost, tuned
-  hyperparameters for `has_identity=1` LightGBM only).
-- **Next action:** wire up inference code that routes a transaction to the
-  correct model by its `has_identity` flag (currently the model paths only
-  exist as separate saved artifacts under `models/`, not a single callable
-  pipeline). That's the last thing standing between this branch and being
-  PR-ready. Cost-Sensitive Decision Framework (including the flagged
-  amount-weighted-training idea) remains on hold until that's done.
+**Current state (start of session 8):**
+- main: Phase 1 **and** Phase 2 Tier 1 merged. PR #2
+  (`feature/phase2-feature-engineering`) merged 2026-07-06 — the "PR #2 open"
+  note from session 7 was stale; corrected here after confirming via
+  `gh pr list --state all`.
+- `feature/phase2-tier2-and-segmentation`: branched from Tier 1's pre-merge
+  tip, so it already contains everything PR #2 merged plus its own 7 commits
+  (Tier 2 v1→v2→v3, error analysis, segmentation, SMOTE ablation,
+  hyperparameter tuning, inference wiring below). Pushed to origin, no PR
+  opened yet. `models/production_metrics.json` holds the per-model-alone
+  numbers from session 7; `models/hybrid_val_metrics.json` (new, session 8)
+  holds the actual production routing numbers — see "Inference pipeline"
+  above for why they differ for LightGBM.
+- **Session 8:** wired up `phase2_feature_engineering/inference.py` — the
+  callable routing pipeline that was the last thing blocking this branch
+  from being PR-ready. Revised the hybrid architecture decision in the
+  process (algorithm-specific routing, not one fixed rule — see "Inference
+  pipeline" section above).
+- **Next action:** Cost-Sensitive Decision Framework — define the cost
+  function's parameter values, then threshold-sweep on val and confirm once
+  on test (first test-set touch of the whole project).
 
 ---
 
@@ -882,13 +961,12 @@ When starting a new session:
 4. Read this file and `utils.py` to re-establish context
 5. Check `git status`, `git branch`, and `git log --oneline` on both open
    branches to see current state
-6. **Next action:** wire up inference code that routes each transaction to
-   the correct model by its `has_identity` flag (hybrid architecture is
-   decided, production config is SMOTE 1:10 + tuned hyperparameters, and
-   artifacts are saved to `models/` — see "Current state" above and the
-   Phase 2 Tier 2 section's "Segmented model" / "SMOTE ablation" /
-   "Hyperparameter tuning" results). Then move to the Cost-Sensitive
-   Decision Framework.
+6. **Next action:** Cost-Sensitive Decision Framework — inference is wired
+   up (`phase2_feature_engineering/inference.py`, session 8), production
+   routing is algorithm-specific (XGBoost hybrid, LightGBM global-only —
+   see "Inference pipeline" section and Key Decisions Log). Start by
+   defining the cost function's parameter values, then threshold-sweep on
+   val, then confirm once on test.
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment
@@ -923,7 +1001,8 @@ When starting a new session:
 | Segmented model recency handling | Downweight/drop early train quarters for the `has_identity=1` segment only | Within-train quarters show a regime shift (Q2→Q3) in this segment specifically that val/test continue; `has_identity=0` showed no such drift and needs no adjustment. **Superseded (session 7 continued):** a clean with/without ablation (run as a side effect of `smote_ablation.py`) showed recency-weighting is a wash-to-slightly-negative, not the improvement its mechanism argument assumed — dropped from the production config |
 | Segmented model recency method | Exponential decay (half-life 30 days), not a hard Q1/Q2 cutoff | User decision (session 7): avoids discarding Q1/Q2 signal entirely while still emphasizing the Q3/Q4-like regime val/test continue. **Superseded** — see recency handling row above |
 | Segmented model evaluation | Fair per-segment comparison (global vs. segment model, each scored only on its own segment's rows), not a pooled combined metric | Pooling two independently class-weighted segment models' raw probabilities into one ranking metric compares scores on different scales — confirmed via calibration check: `has_identity=0`'s mean predicted probability was 4.5–5.5x its true rate vs. ~1–1.7x for `has_identity=1` |
-| Segmented model final architecture | Hybrid: dedicated model for `has_identity=1`, global model for `has_identity=0` | Fair comparison shows `has_identity=1` segmentation wins outright on both models/metrics; `has_identity=0` tuning (both more and less model complexity) never beat the global model there |
+| Segmented model final architecture | Hybrid: dedicated model for `has_identity=1`, global model for `has_identity=0` (session 7 version) | Fair comparison shows `has_identity=1` segmentation wins outright on both models/metrics; `has_identity=0` tuning (both more and less model complexity) never beat the global model there. **Revised session 8** — see next row |
+| Inference routing (final, session 8) | Algorithm-specific: XGBoost keeps hybrid routing (seg_id1 for has_identity=1); LightGBM uses the global model for all rows, no routing | Re-running the fair comparison under the current SMOTE 1:10 + tuned config (never done before wiring up real inference) showed LightGBM's global model now beats its own has_identity=1 segment model (PR-AUC 0.7868 vs 0.7789) — reversed from session 7's finding, which predates SMOTE/tuning. XGBoost's segment model still wins, margin shrunk (0.0085→0.0050). User decision: route each algorithm by what the current evidence shows, not a single fixed rule |
 | Imbalance handling (production) | SMOTE 1:10 (via `SMOTENC`), replacing `is_unbalance`/`scale_pos_weight` class-weighting and recency-weighting for both production models | Ablation (session 7 continued) showed SMOTE 1:10 beats class-weighting alone on PR-AUC by a wide margin (LightGBM +0.056, XGBoost +0.027) and beats the has_identity=1 segment's recency-weighted config outright on every metric; more aggressive ratios (1:5, 1:3) underperform 1:10 |
 | SMOTE implementation | `SMOTENC`, not plain `SMOTE` | Plain SMOTE linearly interpolates every column, corrupting one-hot dummies, native categorical columns, and binary engineered flags into meaningless fractional values; `SMOTENC` majority-votes those columns instead of interpolating them |
 | Hyperparameter tuning scope | Modest randomized search (6 trials/model/algorithm), not an exhaustive grid | Tuning is "if time allows" per project priority, not the main event; adopted 3 of 4 winning configs (Global LightGBM/XGBoost, has_identity=1 LightGBM), kept has_identity=1 XGBoost at its SMOTE-1:10 default since its best trial's margin was too thin relative to the 6-trial selection bias to trust |
