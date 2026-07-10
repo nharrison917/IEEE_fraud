@@ -21,7 +21,7 @@ this skill; see Gotchas.)
 ## Prerequisites
 
 Playwright + headless Chromium, installed once into the `ieee-fraud` env
-(not tracked in `environment.yml` -- it's a test-only tool, not a project
+(not tracked in `env/environment.yml` -- it's a test-only tool, not a project
 dependency):
 
 ```bash
@@ -29,7 +29,7 @@ dependency):
 /c/Users/nharr/anaconda3/Scripts/conda run -n ieee-fraud python -m playwright install chromium
 ```
 
-`streamlit` itself is already in `environment.yml` (verified installed:
+`streamlit` itself is already in `env/environment.yml` (verified installed:
 1.58.0).
 
 ## Setup / Build
@@ -103,6 +103,15 @@ zero-console-errors + screenshot check *is* the test.
 
 ## Gotchas
 
+- **Streamlit Community Cloud prioritizes `environment.yml` over `requirements.txt`**
+  if both exist at repo root (`uv.lock` > `Pipfile` > `environment.yml` >
+  `requirements.txt` > `pyproject.toml`). This project's local conda dev environment
+  lives at `env/environment.yml` specifically to stay out of Cloud's root-level scan --
+  `requirements.txt` + `runtime.txt` at the actual repo root are what Cloud deploys use.
+  Hit this for real: a first deploy attempt sat at conda's "Solving environment:" for the
+  full dev stack (xgboost, lightgbm, imbalanced-learn, scikit-learn) for 10+ minutes
+  before the cause was traced to environment.yml being at root and outranking
+  requirements.txt. If `env/environment.yml` ever moves back to root, re-verify this.
 - **`get_by_text()` for section names is ambiguous -- use
   `get_by_role("heading", ...)` instead.** The sidebar's own caption
   ("Settings that affect the Threshold Explorer, Sensitivity Analysis, and
