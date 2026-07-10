@@ -35,6 +35,21 @@ os.environ.setdefault(
     "AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL",
 )
 
+# Same class of bug, different library: pyarrow has its own C++ core with its
+# own independent SIMD dispatch, completely separate from numpy's -- the env
+# var above has no effect on it. Three consecutive Streamlit Cloud crash
+# traces all rooted here: pandas' StringArray.__arrow_array__() (called
+# unavoidably by Streamlit's own st.dataframe() -> convert_pandas_df_to_arrow_bytes,
+# since sending data to the frontend grid widget requires Arrow format
+# regardless of pandas' internal storage choice) segfaults constructing a
+# pyarrow array from Python strings on this container. ARROW_USER_SIMD_LEVEL
+# is Arrow's own official mechanism for this (see
+# https://arrow.apache.org/docs/cpp/env_vars.html) -- NONE, not just
+# disabling AVX512, since AVX512-only disabling already proved insufficient
+# once for the sibling numpy issue and this has already cost several
+# redeploy cycles.
+os.environ.setdefault("ARROW_USER_SIMD_LEVEL", "NONE")
+
 import json
 
 import numpy as np
