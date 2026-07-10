@@ -42,6 +42,19 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# The actual root cause of the segfault the two fixes above didn't catch:
+# pandas 3.0.3 defaults to future.infer_string=True + mode.string_storage=
+# "auto", which resolves to pyarrow-backed string storage for ANY string
+# data -- not just the one DataFrame construction originally patched. That
+# fix (columnar instead of row-wise) only avoided ONE call path into pandas'
+# pyarrow-backed string array code (pandas/core/arrays/string_arrow.py); the
+# same crash reappeared through dict_to_mgr()'s own Index construction on
+# the next attempt, confirming the bug is in constructing ANY pandas Index
+# from Python strings on this specific container, regardless of code path.
+# Verified locally (identical pandas 3.0.3): this option actually switches
+# the backend to plain pandas.arrays.StringArray, not ArrowStringArray.
+pd.set_option("mode.string_storage", "python")
+
 # ============================================================
 # PAGE CONFIG
 # ============================================================
