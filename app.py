@@ -310,26 +310,36 @@ st.markdown(
     "on validation and confirmed once here). The production choice is highlighted."
 )
 
-rows = []
+# Built columnar (dict-of-lists), not row-wise (list-of-dicts), deliberately --
+# pd.DataFrame([{...}, {...}]) routes column-name construction through
+# pandas.core.internals.construction._list_of_dict_to_arrays(), which calls
+# ensure_index() on the collected keys and segfaulted on Streamlit Community
+# Cloud's container (crash trace pointed at pandas' pyarrow-backed string
+# array code specifically in that call, not in any row value). Columnar
+# construction never calls that function at all, so it isn't a workaround
+# for the bug's symptom -- it avoids the buggy code path entirely.
+columns = {
+    "Algorithm": [], "Type": [], "Threshold": [], "Total Cost": [], "FP Cost": [],
+    "FN Cost": [], "FP Count": [], "FN Count": [], "Precision": [], "Recall": [], "F1": [],
+}
+best_flags_list = []
 for r in test_results:
     is_best = (r["algo_key"] == WINNER_KEY and r["threshold_type"] == "Cost-Optimal (val)")
-    rows.append({
-        "Algorithm": ("* " if is_best else "  ") + r["algorithm"],
-        "Type": r["threshold_type"],
-        "Threshold": f"{r['threshold']:.2f}",
-        "Total Cost": f"${r['total_cost']:,.0f}",
-        "FP Cost": f"${r['fp_cost']:,.0f}",
-        "FN Cost": f"${r['fn_cost']:,.0f}",
-        "FP Count": r["n_fp"],
-        "FN Count": r["n_fn"],
-        "Precision": f"{r['precision']:.3f}",
-        "Recall": f"{r['recall']:.3f}",
-        "F1": f"{r['f1']:.3f}",
-        "_best": is_best,
-    })
+    columns["Algorithm"].append(("* " if is_best else "  ") + r["algorithm"])
+    columns["Type"].append(r["threshold_type"])
+    columns["Threshold"].append(f"{r['threshold']:.2f}")
+    columns["Total Cost"].append(f"${r['total_cost']:,.0f}")
+    columns["FP Cost"].append(f"${r['fp_cost']:,.0f}")
+    columns["FN Cost"].append(f"${r['fn_cost']:,.0f}")
+    columns["FP Count"].append(r["n_fp"])
+    columns["FN Count"].append(r["n_fn"])
+    columns["Precision"].append(f"{r['precision']:.3f}")
+    columns["Recall"].append(f"{r['recall']:.3f}")
+    columns["F1"].append(f"{r['f1']:.3f}")
+    best_flags_list.append(is_best)
 
-table_df = pd.DataFrame(rows)
-best_flags = table_df.pop("_best")
+table_df = pd.DataFrame(columns)
+best_flags = pd.Series(best_flags_list)
 
 
 def highlight_best(row):
