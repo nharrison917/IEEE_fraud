@@ -14,6 +14,12 @@ without re-scoring the model.
 """
 
 import os
+import faulthandler
+
+# Prints a C-level stack trace to stderr on a native crash (segfault) instead
+# of the bare "Segmentation fault" the OS reports on its own -- diagnostic
+# only, near-zero overhead, safe to leave on permanently.
+faulthandler.enable()
 
 # Must be set before numpy is imported (numpy's CPU/SIMD dispatch happens at
 # import time) -- pandas also imports numpy internally, so this has to sit
