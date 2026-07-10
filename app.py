@@ -14,6 +14,21 @@ without re-scoring the model.
 """
 
 import os
+
+# Must be set before numpy is imported (numpy's CPU/SIMD dispatch happens at
+# import time) -- pandas also imports numpy internally, so this has to sit
+# above both. Works around a segfault observed on Streamlit Community Cloud's
+# containerized environment: numpy's own troubleshooting docs describe this
+# exact failure mode -- a docker/VM misreporting CPU features it doesn't
+# actually support (AVX512 in particular), causing numpy to crash trying to
+# use them. Disabling the AVX512 family forces the safe fallback path;
+# doesn't affect correctness, at most a minor performance cost that's
+# irrelevant for this dashboard's data sizes.
+os.environ.setdefault(
+    "NPY_DISABLE_CPU_FEATURES",
+    "AVX512F,AVX512CD,AVX512_KNL,AVX512_KNM,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL",
+)
+
 import json
 
 import numpy as np
