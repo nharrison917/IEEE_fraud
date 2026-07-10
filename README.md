@@ -319,3 +319,11 @@ analysis script above); model `.pkl`/`.txt` binaries are not required to run it.
 
 Python · pandas · LightGBM · XGBoost · imbalanced-learn (SMOTENC) · scikit-learn ·
 Plotly · Streamlit
+
+---
+
+## License
+
+[MIT](LICENSE) — code only. The IEEE-CIS dataset itself is subject to
+[Kaggle's competition terms](https://www.kaggle.com/c/ieee-fraud-detection/rules)
+and is not included in this repository.
