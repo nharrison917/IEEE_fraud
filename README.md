@@ -281,6 +281,14 @@ phase2_cost_analysis/
 models/                             Metrics JSON (tracked); *.pkl / *.txt binaries (regenerate locally)
 .claude/skills/run-ieee-fraud/       Project skill: launch + Playwright-verify the dashboard
 
+env/environment.yml                  Local conda dev environment -- kept out of the repo root
+                                     deliberately: Streamlit Community Cloud prioritizes
+                                     environment.yml over requirements.txt if both are present
+                                     at root, which would make it try to conda-solve the full
+                                     dev stack (xgboost, lightgbm, ...) that app.py doesn't need
+requirements.txt, runtime.txt        Streamlit Cloud's actual deploy dependencies (pip-based) --
+                                     only what app.py itself imports
+
 data/                                Not tracked — see Dataset section above
 ```
 
@@ -290,7 +298,7 @@ data/                                Not tracked — see Dataset section above
 
 ```bash
 # Create the conda environment
-conda env create -f environment.yml
+conda env create -f env/environment.yml
 conda activate ieee-fraud
 
 # Download the dataset from Kaggle and place these two files in data/:
