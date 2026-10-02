@@ -1,0 +1,3 @@
+# Local development and testing. Kept separate so Streamlit Cloud does not install pytest.
+-r requirements.txt
+pytest==9.1.1
