@@ -993,9 +993,15 @@ was actually tested.
 
 ---
 
-## Phase 2 — Cost-Sensitive Decision Framework
+## Phase 3 — Cost-Sensitive Decision Framework
 
 Same structure as prior project (`credit_card_fraud/phase2_cost_analysis/`).
+
+*Renumbered from "Phase 2" in session 10 (2026-10-06): the README intro
+describes three phases (baseline, feature engineering, cost framework), but
+the cost framework had inherited the prior project's "Phase 2" label, so two
+sections were both called Phase 2. The folder `phase2_cost_analysis/` and
+older session notes / PR titles (e.g. PR #4) keep the original name.*
 
 ### Cost function
 Structure carried forward from prior project:
@@ -1021,6 +1027,14 @@ Interactive Streamlit dashboard with:
 Target: deployed to Streamlit Community Cloud.
 Note: data size (~590k rows) may require pre-computing dashboard data at
 model run time rather than loading raw data in the app. Confirm at build time.
+
+**Done (2026-07-10, PRs #7–#14):** live at
+https://ieeefraud-qhlzkqn2rdawzjccmnxgna.streamlit.app/ . `app.py` reads the
+pre-computed `models/cost_dashboard_data.json`, so no raw data or model
+binaries are needed on Cloud. Getting it stable on the Cloud container took
+several rounds of segfault fixes (numpy AVX512, then pandas' pyarrow-backed
+string storage, then `ARROW_USER_SIMD_LEVEL=NONE`); see the comments at the
+top of `app.py` for the full trail.
 
 ### Cost function parameter values (session 9) — payment-processor lens
 
@@ -1207,19 +1221,30 @@ against.
   re-checked in one command. `environment.yml` was cleaned of unused
   deps (`category_encoders`, `jupyter`, `ipykernel` — never actually
   used anywhere in the codebase).
-- Local branches `feature/phase2-cost-sensitivity` and
-  `docs/readme-and-wrapup` are fully merged and safe to delete (local +
-  remote) whenever convenient — not yet done as of end of session 9,
-  left for the user to confirm.
-- **Next action:** not yet decided — user is pausing here deliberately
-  ("wrapping up... to a state where I can come back and make smaller
-  modifications"). Candidates for a future session: deploy the dashboard
-  to Streamlit Community Cloud (original PLAN.md target — already
-  satisfied precondition: "data size may require pre-computing dashboard
-  data" is done, since `app.py` reads the pre-computed
-  `cost_dashboard_data.json` rather than raw data); the amount-weighted
-  training idea flagged earlier and never pursued; revisiting the
-  `has_identity=0` segment; anything else the user brings back.
+- **Next action (as of session 9):** not yet decided — user paused here
+  deliberately. Candidates were: deploy to Streamlit Community Cloud (since
+  done — see below), the amount-weighted training idea, revisiting the
+  `has_identity=0` segment.
+
+**Since session 9 (updated 2026-10-06, session 10):**
+- **Deployed** to Streamlit Community Cloud:
+  https://ieeefraud-qhlzkqn2rdawzjccmnxgna.streamlit.app/ — PR #7
+  (requirements.txt/runtime.txt), #8 (MIT license), #9 (`environment.yml`
+  moved to `env/` so Cloud uses pip, not conda), #10–#14 (Cloud-container
+  segfault fixes), all merged 2026-07-10.
+- **PR #15** (2026-10-02): pinned `requirements.txt` to smoke-tested exact
+  versions; added `tests/test_app.py` (headless `streamlit.testing`
+  AppTest that exercises every radio/selectbox option) and
+  `requirements-dev.txt` (adds pytest).
+- **Session 10** (`docs/pre-resume-polish`): pre-resume review. Fixed a
+  malformed README results table (4-column header, 3-column separator),
+  added live-dashboard link + CI badge, renumbered the cost framework to
+  Phase 3, synced this file, and added a GitHub Actions workflow
+  (`.github/workflows/smoke-test.yml`) running the smoke test on push/PR.
+- All old feature branches are deleted (local + remote); only `main` remains.
+- **Next action:** none planned — project is in its portfolio-ready state.
+  Open candidates unchanged: amount-weighted training, `has_identity=0`
+  revisit.
 
 ---
 
@@ -1230,20 +1255,19 @@ When starting a new session:
 2. Open VS Code in `C:\Projects\IEEE_fraud`
 3. Select Python interpreter: `Python (ieee-fraud)`
 4. Read this file and `utils.py` to re-establish context
-5. Check `git status`, `git branch`, and `git log --oneline` — **main is
-   fully up to date as of end of session 9** (PRs #2–#5 all merged; see
-   "Current state" above). Start new work from a fresh branch off main,
-   not off one of the old feature branches. `feature/phase2-cost-sensitivity`
-   and `docs/readme-and-wrapup` are merged and safe to delete whenever
-   convenient (not yet done).
+5. Check `git status`, `git branch`, and `git log --oneline` — only `main`
+   exists; see "Current state" above for the PR history. Start new work
+   from a fresh branch off main.
 6. **The whole project is in a stable, resumable state**: Phase 1
-   baseline, Phase 2 Tier 1/Tier 2/segmentation/ensemble, the
+   baseline, Phase 2 Tier 1/Tier 2/segmentation/ensemble, the Phase 3
    payment-processor Cost-Sensitive Decision Framework, the Streamlit
-   dashboard (`app.py`, verified via `.claude/skills/run-ieee-fraud/`),
-   and a portfolio-facing `README.md` with dashboard screenshots are all
-   done and merged. **Next action not yet decided** — user paused here
-   deliberately; see "Current state" above for candidates (Streamlit
-   Cloud deploy, amount-weighted training, `has_identity=0` revisit).
+   dashboard (`app.py`, live on Streamlit Community Cloud), and a
+   portfolio-facing `README.md` are all done and merged.
+   **Verify the dashboard:** `python -m pytest tests/ -v` in a clean
+   Python 3.11 venv built from `requirements-dev.txt` (mirrors Cloud;
+   the `ieee-fraud` conda env does not include pytest) — also runs in
+   GitHub Actions on every push. For a visual check, use
+   `.claude/skills/run-ieee-fraud/` (Playwright).
 7. TransactionDT timezone: single reference point confirmed — id_14-adjusted
    `local_hour` is valid. Used in Phase 2 Tier 1's `local_hour` feature.
 8. `pandas.Series.corr()` crashes this environment outright — see Environment

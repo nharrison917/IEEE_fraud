@@ -10,7 +10,7 @@ single confirming pass on the test set (first and only test-set touch of
 this project).
 
 COST ASSUMPTIONS -- payment-processor lens (session 9 decision; see PLAN.md
-"Phase 2 -- Cost-Sensitive Decision Framework"):
+"Phase 3 -- Cost-Sensitive Decision Framework"):
 
   This project's job-application target is a payment PROCESSOR -- the
   middleman between merchant and issuer -- not a bank/issuer and not a

@@ -1,0 +1,27 @@
+# Runs the headless dashboard smoke test (tests/test_app.py) on every push and PR.
+# Mirrors Streamlit Community Cloud: Python 3.11 + the pinned requirements.txt,
+# installed via requirements-dev.txt (which adds pytest on top).
+name: Dashboard smoke test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run smoke test
+        run: python -m pytest tests/ -v

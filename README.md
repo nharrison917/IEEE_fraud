@@ -2,6 +2,11 @@
 
 ## E-Commerce Fraud Detection + Payment-Processor Cost-Sensitive Decision Framework
 
+[![Dashboard smoke test](https://github.com/nharrison917/IEEE_fraud/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/nharrison917/IEEE_fraud/actions/workflows/smoke-test.yml)
+
+**[Live dashboard →](https://ieeefraud-qhlzkqn2rdawzjccmnxgna.streamlit.app/)**
+(hosted on Streamlit Community Cloud; if it has been idle, it may take ~30 seconds to wake up)
+
 ---
 
 ## Overview
@@ -54,8 +59,8 @@ rather than smoothed over.
 
 ## Dashboard
 
-An interactive Streamlit dashboard surfaces the cost-sensitive decision framework —
-model selector, live threshold and cost-parameter sliders, algorithm comparison,
+An interactive Streamlit dashboard ([live here](https://ieeefraud-qhlzkqn2rdawzjccmnxgna.streamlit.app/))
+surfaces the cost-sensitive decision framework — model selector, live threshold and cost-parameter sliders, algorithm comparison,
 sensitivity analysis, and an operational-reality panel scaled to 1,000,000
 transactions.
 
@@ -180,7 +185,7 @@ to hold in both `has_identity` segments separately, not just in aggregate.
 
 ---
 
-## Phase 2 — Cost-Sensitive Decision Framework
+## Phase 3 — Cost-Sensitive Decision Framework
 
 ### Why the cost function isn't reused from the prior project
 
@@ -209,10 +214,14 @@ Threshold optimization + sensitivity analysis on validation, confirmed once on t
 across all three algorithm choices:
 
 | Algorithm | Val cost-optimal threshold | Val total cost | Test total cost (same threshold) |
-|---|---|---|
+|---|---|---|---|
 | LightGBM | 0.03 | $280,537 | $305,142 |
 | XGBoost | 0.03 | $260,113 | $279,752 |
 | **Ensemble (production)** | **0.03** | **$255,922** | $280,056 |
+
+On test, XGBoost edges the ensemble by $304 (~0.1%), well inside noise; the ensemble
+was selected on validation (where it leads by ~$4.2k) and test is used for
+confirmation only, not re-selection.
 
 ### The aggressive threshold, documented rather than hidden
 
@@ -274,7 +283,7 @@ phase2_feature_engineering/
     inference.py                    Production HybridModel (algorithm-specific routing)
     finalize_production_models.py, finalize_tuned_models.py   Production artifact builds
 
-phase2_cost_analysis/
+phase2_cost_analysis/                Phase 3 (folder name predates the phase renumbering)
     cost_threshold_analysis.py      Cost function, threshold sweep, sensitivity, test confirmation
     cost_report.html, results_summary.md   Stakeholder report and written summary
 
@@ -311,7 +320,7 @@ python phase1_baseline/pipeline.py
 python phase2_feature_engineering/finalize_production_models.py
 python phase2_feature_engineering/finalize_tuned_models.py
 
-# Phase 2 — cost-sensitive analysis (also generates models/cost_dashboard_data.json)
+# Phase 3 — cost-sensitive analysis (also generates models/cost_dashboard_data.json)
 python phase2_cost_analysis/cost_threshold_analysis.py
 
 # Dashboard
